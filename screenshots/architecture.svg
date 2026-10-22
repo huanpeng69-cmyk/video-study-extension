@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .box{fill:#ffffff;stroke:#334155;stroke-width:2;rx:10}
+      .title{fill:#0f172a;font-size:15px;font-weight:700}
+      .sub{fill:#475569;font-size:12px}
+      .lbl{fill:#0f172a;font-size:12px}
+      .edge{stroke:#475569;stroke-width:2;fill:none}
+      .note{fill:#b45309;font-size:11px}
+      .tag{fill:#2563eb;font-size:11px;font-weight:700}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="540" fill="#f8fafc"/>
+  <text x="20" y="30" class="title">视频学习助手 · 架构与数据流（示意图）</text>
+  <text x="20" y="48" class="note">说明：本图为功能示意，非真实界面截图。流程以真实播放进度驱动，音频与转写请求均不出本机。</text>
+
+  <!-- 视频页 -->
+  <rect x="30" y="80" width="200" height="120" rx="10" class="box"/>
+  <text x="50" y="108" class="title">视频页</text>
+  <text x="50" y="130" class="sub">B站 / YouTube / 通用站</text>
+  <text x="50" y="150" class="sub">HTML5 &lt;video&gt;</text>
+  <text x="50" y="172" class="sub">按需注入识别脚本</text>
+
+  <!-- 弹窗 -->
+  <rect x="30" y="230" width="200" height="130" rx="10" class="box"/>
+  <text x="50" y="258" class="title">弹窗 Popup</text>
+  <text x="50" y="280" class="sub">字幕列表 / 进度跳转</text>
+  <text x="50" y="300" class="sub">从音频转写 / 导入</text>
+  <text x="50" y="320" class="sub">逐字自动学习 + 重试</text>
+  <text x="50" y="342" class="sub">整段总结 → 笔记</text>
+
+  <!-- 后台 SW -->
+  <rect x="370" y="120" width="220" height="150" rx="10" class="box"/>
+  <text x="390" y="148" class="title">后台 Service Worker</text>
+  <text x="390" y="170" class="sub">每 30s 播放节点触发</text>
+  <text x="390" y="190" class="sub">SSE 流式自动学习</text>
+  <text x="390" y="210" class="sub">节点去重 / 断点恢复</text>
+  <text x="390" y="230" class="sub">失败熔断（≤4 次重试）</text>
+  <text x="390" y="252" class="sub">引用校验：每条 → cueId</text>
+
+  <!-- 字幕来源 -->
+  <rect x="370" y="300" width="220" height="120" rx="10" class="box"/>
+  <text x="390" y="328" class="title">字幕来源（不伪造）</text>
+  <text x="390" y="350" class="sub">1. 站点接口（B站登录态）</text>
+  <text x="390" y="370" class="sub">2. 页面 &lt;track&gt;</text>
+  <text x="390" y="390" class="sub">3. 字幕 src（同域/CORS）</text>
+  <text x="390" y="410" class="sub">4. 页面字幕探针（YouTube）</text>
+
+  <!-- 本地 Whisper -->
+  <rect x="700" y="120" width="230" height="150" rx="10" class="box"/>
+  <text x="720" y="148" class="title">本地 Whisper（不出本机）</text>
+  <text x="720" y="170" class="sub">Whishper 容器 :8082</text>
+  <text x="720" y="190" class="sub">或内置服务 :8765</text>
+  <text x="720" y="210" class="sub">仅 127.0.0.1/localhost</text>
+  <text x="720" y="230" class="sub">无需 API Key</text>
+  <text x="720" y="252" class="sub">tabCapture→离屏→转写</text>
+
+  <!-- 资料库 -->
+  <rect x="700" y="300" width="230" height="120" rx="10" class="box"/>
+  <text x="720" y="328" class="title">资料库 / 笔记 / 导出</text>
+  <text x="720" y="350" class="sub">带引用小节入笔记</text>
+  <text x="720" y="370" class="sub">Markdown / SRT 导出</text>
+  <text x="720" y="390" class="sub">JSON 备份恢复</text>
+  <text x="720" y="410" class="sub">手写不被自动覆盖</text>
+
+  <!-- 边 -->
+  <path class="edge" d="M130,200 L130,230" marker-end="url(#arrow)"/>
+  <path class="edge" d="M230,150 C300,150 300,195 370,195" marker-end="url(#arrow)"/>
+  <path class="edge" d="M480,270 L480,300" marker-end="url(#arrow)"/>
+  <path class="edge" d="M590,195 C660,195 660,195 700,195" marker-end="url(#arrow)"/>
+  <path class="edge" d="M590,360 C660,360 660,360 700,360" marker-end="url(#arrow)"/>
+  <path class="edge" d="M480,120 C480,80 480,80 480,80" marker-end="url(#arrow)"/>
+  <path class="edge" d="M480,195 L480,150" />
+
+  <text x="300" y="178" class="tag">字幕/进度</text>
+  <text x="620" y="178" class="tag">音频(本机)</text>
+  <text x="300" y="290" class="tag">按时间归属节点</text>
+  <text x="620" y="290" class="tag">带时间戳字幕</text>
+</svg>

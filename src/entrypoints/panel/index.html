@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>视频学习笔记</title>
+    <style>
+      /* 面板是扩展页形式（不再是浏览器级弹窗）：点页面外部不会关闭。
+         固定尺寸只是默认观感，用户可拖标题栏移动、可折叠。 */
+      html,
+      body {
+        width: 520px;
+        height: 600px;
+        margin: 0;
+        overflow: hidden;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+      }
+      .app {
+        min-height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

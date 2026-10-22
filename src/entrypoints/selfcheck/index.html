@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>自检 · 视频学习笔记</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; margin: 0; padding: 16px; background: #14161a; color: #e6e8ea; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .row { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: #1d2026; border-left: 3px solid #444; }
+      .ok { border-left-color: #3fb950; }
+      .bad { border-left-color: #f85149; }
+      .warn { border-left-color: #d29922; }
+      .k { color: #9aa4b2; }
+      code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+      pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; color: #b8c0cc; }
+      button { margin-right: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid #333; background: #262a31; color: #e6e8ea; cursor: pointer; }
+      button:hover { background: #2f343d; }
+      #log { margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>自检 · 视频学习笔记</h1>
+    <p style="color:#9aa4b2;margin:0 0 12px">
+      在扩展自己的页面里直接调用真实存储与后台，逐步显示结果。用于定位「字幕有了但自动学习不出字」到底断在哪一步。
+    </p>
+    <div>
+      <button id="run">运行自检</button>
+      <button id="copy">复制结果</button>
+      <button id="clear">清空</button>
+    </div>
+    <div id="log"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
