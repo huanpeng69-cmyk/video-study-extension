@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatTimecode } from '../domain/transcript';
 import type { Cue } from '../domain/transcript';
-import { activeCueAt, cueAtCapture, cueExcerpt, type ExcerptRadius } from './followCue';
+import { activeCueAt, cueExcerpt, type ExcerptRadius } from './followCue';
 
 interface Props {
   cues: Cue[];
@@ -9,12 +9,24 @@ interface Props {
   disabled: boolean;
   onSeek: (positionMs: number) => void;
   onInsert: (cues: Cue[]) => void;
+  /** 字幕的直接出口：选中几条就作用在几条，未选时作用于全部。 */
+  onCopy: (cues: Cue[]) => void;
+  onDownload: (cues: Cue[]) => void;
   /** 当前播放位置；缺省时不做跟随，行为与旧版一致。 */
   positionMs?: number | null;
 }
 
-/** 字幕列表：时间戳跳转、搜索、选段加入笔记、跟随播放。 */
-export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert, positionMs = null }: Props) {
+/** 字幕列表：时间戳跳转、搜索、选段加入笔记/复制/下载、跟随播放。 */
+export function TranscriptPanel({
+  cues,
+  translations,
+  disabled,
+  onSeek,
+  onInsert,
+  onCopy,
+  onDownload,
+  positionMs = null,
+}: Props) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** 用户滚动或搜索时暂停跟随，避免抢走阅读位置。 */
@@ -31,6 +43,8 @@ export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert
     });
   }, [cues, query, translations]);
 
+  const chosen = useMemo(() => cues.filter((cue) => selected.has(cue.cueId)), [cues, selected]);
+
   const toggle = (cueId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -41,7 +55,6 @@ export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert
   };
 
   const insertSelected = () => {
-    const chosen = cues.filter((cue) => selected.has(cue.cueId));
     if (chosen.length === 0) return;
     // 摘录半径：把选中段前后各扩几条，保留上下文；顺序仍按原文。
     const wanted = new Set(chosen.map((cue) => cue.cueId));
@@ -52,8 +65,6 @@ export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert
   };
 
   const active = useMemo(() => activeCueAt(cues, positionMs), [cues, positionMs]);
-  /** 截图通常发生在“刚说完”之后：按钮上显示当前或刚结束的那条。 */
-  const captureCue = useMemo(() => cueAtCapture(cues, positionMs), [cues, positionMs]);
 
   // 跟随播放：未暂停且未搜索时，把当前字幕滚入可视区。
   useEffect(() => {
@@ -79,13 +90,13 @@ export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert
       <div className="row">
         <span className="hint">
           共 {cues.length} 条{query ? `，匹配 ${filtered.length} 条` : ''}
-          {active ? ` · 当前 ${formatTimecode(active.startMs)}` : ''}
+          {active ? `，当前 ${formatTimecode(active.startMs)}` : ''}
         </span>
         <span className="spacer" />
         {paused && active ? (
           <button type="button" className="ghost" onClick={() => setPaused(false)}>继续跟随</button>
         ) : null}
-        <label className="hint" title="加入笔记时额外带上前后各几条字幕">
+        <label className="hint">
           上下文
           <select
             value={radius}
@@ -100,12 +111,14 @@ export function TranscriptPanel({ cues, translations, disabled, onSeek, onInsert
         <button type="button" className="ghost" onClick={insertSelected} disabled={selected.size === 0}>
           加入笔记（{selected.size}）
         </button>
+        <button type="button" className="ghost" onClick={() => onCopy(chosen)}>
+          复制（{chosen.length || '全部'}）
+        </button>
+        <button type="button" className="ghost" onClick={() => onDownload(chosen)}>
+          下载 SRT
+        </button>
       </div>
-      {captureCue ? (
-        <p className="hint">
-          截图会附上 [{formatTimecode(captureCue.startMs)}] 这一句的字幕。
-        </p>
-      ) : null}
+
       <ul
         className="cue-list"
         ref={listRef}

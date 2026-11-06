@@ -6,8 +6,9 @@
  * 这组测试直接驱动后台的 onMessage 监听器，而不是只断言常量。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StudyDatabase, setDbForTests } from '../src/storage/db';
+import { StudyDatabase, saveTranscript, setDbForTests } from '../src/storage/db';
 import type { RuntimeResponse } from '../src/lib/messages';
+import { hashTranscript } from '../src/domain/transcript';
 import { ASR_BACKGROUND_TARGET, ASR_EVENT_TYPE } from '../src/asr/tab-protocol';
 
 const mocks = vi.hoisted(() => ({
@@ -29,6 +30,9 @@ type MessageHandler = (message: unknown, sender: chrome.runtime.MessageSender, r
 let db: StudyDatabase;
 let onMessage: MessageHandler;
 let session: Map<string, unknown>;
+/** 工具栏点击监听：真实链路里只有它能签发采集许可。 */
+type ClickListener = (tab: chrome.tabs.Tab) => void;
+let onActionClicked: ClickListener | undefined;
 const trusted = { id: 'extension-id', url: 'chrome-extension://extension-id/panel.html' };
 
 function uiSend(type: string, payload: Record<string, unknown> = {}) {
@@ -76,6 +80,10 @@ beforeEach(async () => {
       query: async () => [{ id: 77, url: 'https://example.com/watch?v=abc' }],
       create: async () => ({}), sendMessage: vi.fn(async () => ({ ok: true })),
     },
+    action: {
+      onClicked: { addListener: (listener: ClickListener) => { onActionClicked = listener; } },
+    },
+    sidePanel: { open: vi.fn(async () => {}), setPanelBehavior: vi.fn(async () => {}) },
     scripting: { executeScript: vi.fn(async () => []) },
     offscreen: { hasDocument: async () => true, createDocument: vi.fn(async () => {}), closeDocument: vi.fn(async () => {}) },
   });
@@ -93,6 +101,7 @@ afterEach(async () => {
   await db.delete();
   setDbForTests(null);
   session.clear();
+  // 不再需要重置授权：tabCapture 授权由浏览器维护。
 });
 
 
@@ -113,6 +122,8 @@ async function startSession(): Promise<string> {
   const state = await uiSend('ASR_STATE');
   return (state.data as { id?: string } | null)?.id ?? '';
 }
+
+
 
 describe('离屏音频事件必须真正被后台接收', () => {
   it('用协议常量上报 progress → 后台采纳进度（而不是静默丢弃）', async () => {
@@ -225,5 +236,144 @@ describe('没有字幕时按采集证据归因', () => {
     });
     expect(view?.error?.code).toBe('NO_SPEECH');
     expect(view?.error?.detail ?? '').not.toContain('静音');
+  });
+});
+
+describe('转写完成与保存的先后顺序', () => {
+  it('字幕还在保存时不提前发布 completed，避免 UI 误报「完成但没保存」', async () => {
+    const id = await startSession();
+    await offscreenSend(ASR_EVENT_TYPE, {
+      id, event: { kind: 'chunk', index: 0, segments: [{ startMs: 0, endMs: 1_000, text: '最后一句' }] },
+    });
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // 卡住「查已有字幕」这一步：它发生在写事务之前，不干扰 Dexie 的事务上下文。
+    const slowLookup = vi.spyOn(db.transcripts, 'where').mockImplementation((() => ({
+      equals: () => ({
+        filter: () => ({
+          first: async () => { await gate; return undefined; },
+        }),
+      }),
+    })) as never);
+
+    const finishing = offscreenSend(ASR_EVENT_TYPE, { id, event: { kind: 'done', warnings: [] } });
+    await vi.waitFor(() => expect(slowLookup).toHaveBeenCalled());
+
+    // 保存事务被卡住时，对外仍然是「转写中」，而不是「已完成但没有 transcriptId」。
+    const mid = await uiSend('ASR_STATE');
+    expect(mid.data).toMatchObject({ status: 'transcribing' });
+    expect((mid.data as { transcriptId?: string }).transcriptId).toBeUndefined();
+
+    release();
+    await finishing;
+    const done = await uiSend('ASR_STATE');
+    expect(done.data).toMatchObject({ status: 'completed' });
+    expect((done.data as { transcriptId?: string }).transcriptId).toBeTruthy();
+    slowLookup.mockRestore();
+  });
+
+  it('保存失败时保留分片并报告 STORAGE_FAILED，不丢掉整段转写', async () => {
+    const id = await startSession();
+    await offscreenSend(ASR_EVENT_TYPE, {
+      id, event: { kind: 'chunk', index: 0, segments: [{ startMs: 0, endMs: 1_000, text: '不能丢的字' }] },
+    });
+    const failedLookup = vi.spyOn(db.transcripts, 'where').mockImplementation((() => {
+      throw new Error('quota exceeded');
+    }) as never);
+
+    await offscreenSend(ASR_EVENT_TYPE, { id, event: { kind: 'done', warnings: [] } });
+    const state = await uiSend('ASR_STATE');
+    expect(state.data).toMatchObject({ status: 'failed' });
+    expect((state.data as { error?: { code?: string } }).error?.code).toBe('STORAGE_FAILED');
+    expect((state.data as { segments?: unknown[] }).segments).toHaveLength(1);
+
+    // 可恢复副本仍在 session 里，重开界面不会只剩一句「保存失败」。
+    const persisted = session.get('asr.session.v1') as { segments?: unknown[] } | undefined;
+    expect(persisted?.segments).toHaveLength(1);
+    failedLookup.mockRestore();
+  });
+});
+
+describe('中断恢复也必须先落库再发布完成', () => {
+  it('恢复时保存失败 → failed + STORAGE_FAILED，且分片仍可导出', async () => {
+    const id = await startSession();
+    await offscreenSend(ASR_EVENT_TYPE, {
+      id, event: { kind: 'chunk', index: 0, segments: [{ startMs: 0, endMs: 1_000, text: '中断前不能丢' }] },
+    });
+    // 模拟 Service Worker 被回收后重启：只剩 session 快照。
+    const snapshot = session.get('asr.session.v1') as { state?: { status?: string }; segments?: unknown[] } | undefined;
+    expect(snapshot?.segments).toHaveLength(1);
+    expect(snapshot?.state?.status).toBe('recording');
+    resetAsrForTests();
+    const failedLookup = vi.spyOn(db.transcripts, 'where').mockImplementation((() => {
+      throw new Error('quota exceeded');
+    }) as never);
+
+    const state = await uiSend('ASR_STATE');
+    expect(state.data).toMatchObject({ status: 'failed' });
+    expect((state.data as { error?: { code?: string } }).error?.code).toBe('STORAGE_FAILED');
+    expect((state.data as { segments?: unknown[] }).segments).toHaveLength(1);
+    const persisted = session.get('asr.session.v1') as { state?: { status?: string }; segments?: unknown[] } | undefined;
+    expect(persisted?.state?.status).toBe('failed');
+    expect(persisted?.segments).toHaveLength(1);
+    failedLookup.mockRestore();
+  });
+
+  it('旧版本留下的「已完成但没有 transcriptId」快照会在重开时补存', async () => {
+    await startSession();
+    const base = (await uiSend('ASR_STATE')).data as Record<string, unknown>;
+    const segments = [{ startMs: 0, endMs: 1_000, text: '旧快照里的字' }];
+    session.set('asr.session.v1', {
+      state: { ...base, status: 'completed', transcriptId: undefined, segments },
+      segments,
+      seen: [0],
+    });
+    resetAsrForTests();
+
+    const state = await uiSend('ASR_STATE');
+    expect(state.data).toMatchObject({ status: 'completed' });
+    const transcriptId = (state.data as { transcriptId?: string }).transcriptId;
+    expect(transcriptId).toBeTruthy();
+    expect(await db.transcripts.get(transcriptId ?? '')).toBeTruthy();
+  });
+
+  it('库里已有本次采集写下的字幕版本时，恢复直接认领，不再重复保存', async () => {
+    await startSession();
+    const base = (await uiSend('ASR_STATE')).data as Record<string, unknown>;
+    const cues = [{
+      cueId: 'c-1', sequence: 1, startMs: 0, endMs: 1_000,
+      text: '采集途中已经写进库的字幕', sourceIndex: 0,
+    }];
+    const { revision } = await saveTranscript({
+      videoId: String(base.videoId), language: 'auto', sourceKind: 'asr', generationKind: 'ai',
+      trackLabel: '本地转写（进行中） · tiny', sourceHash: hashTranscript(cues), cues,
+    });
+    session.set('asr.session.v1', {
+      state: { ...base, status: 'completed', transcriptId: undefined, segments: [] },
+      segments: [],
+      seen: [],
+    });
+    resetAsrForTests();
+
+    const state = await uiSend('ASR_STATE');
+    expect(state.data).toMatchObject({ status: 'completed' });
+    expect((state.data as { transcriptId?: string }).transcriptId).toBe(revision.id);
+    expect(await db.transcripts.count()).toBe(1);
+  });
+
+  it('库里没有、分片也没有时明确失败，而不是留下装成完成的空会话', async () => {
+    await startSession();
+    const base = (await uiSend('ASR_STATE')).data as Record<string, unknown>;
+    session.set('asr.session.v1', {
+      state: { ...base, status: 'completed', transcriptId: undefined, segments: [] },
+      segments: [],
+      seen: [],
+    });
+    resetAsrForTests();
+
+    const state = await uiSend('ASR_STATE');
+    expect(state.data).toMatchObject({ status: 'failed' });
+    expect((state.data as { error?: { code?: string } }).error?.code).toBe('STORAGE_FAILED');
   });
 });

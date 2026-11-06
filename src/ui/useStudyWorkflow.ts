@@ -6,7 +6,7 @@
  * 翻译、录音和手写笔记仍使用原有工作流。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { appError, describeError, toAppError } from '../domain/errors';
+import { appError, describeError, toAppError, type AppError } from '../domain/errors';
 import { normalizeEndpoint } from '../domain/endpoint';
 import {
   assertImportSize,
@@ -66,6 +66,8 @@ export interface Notice {
   title: string;
   detail?: string;
   action?: string;
+  /** 浏览器/接口返回的原始错误原文，只在本地显示，用于定位问题。 */
+  raw?: string;
 }
 
 export interface TaskProgress {
@@ -152,15 +154,34 @@ export function useStudyWorkflow() {
     (error: unknown, fallbackTitle = '操作失败') => {
       const normalized = toAppError(error);
       const described = describeError(normalized);
+      // 具体原因放在标题里：不同原因共用同一个 code（如 CAPTURE_UNAVAILABLE）时，
+      // 只显示 code 的概括标题会让所有原因看起来一模一样，用户无法据此行动。
+      const actionable = describeErrorForCapture(normalized);
+      // 把「浏览器返回：…」抽成独立字段，让用户能直接复制原始错误，而不是埋在长句里。
+      const actionText = actionable?.action ?? described.action;
+      const rawMatch = /浏览器返回：(.*?)）?\s*$/.exec(actionText ?? '');
       setNotice({
         kind: 'error',
-        title: described.title || fallbackTitle,
+        title: actionable?.title ?? described.title ?? fallbackTitle,
         detail: [normalized.message, normalized.detail].filter(Boolean).join(' · '),
-        action: described.action,
+        action: actionText,
+        ...(rawMatch?.[1] ? { raw: rawMatch[1] } : {}),
       });
     },
     [setNotice],
   );
+
+  /**
+   * 音频采集类错误用后台给的「具体原因」作为标题。
+   * 后台已经按 tabCapture 的真实失败分类过（未调用 / 页面不可采集 / 标签页关闭 / 权限），
+   * 这里不再用统一的概括标题覆盖它。
+   */
+  const describeErrorForCapture = (error: AppError): { title: string; action: string } | null => {
+    if (error.code !== 'CAPTURE_UNAVAILABLE') return null;
+    const message = error.message ?? '';
+    if (!message || message.includes('标签页音频采集不可用')) return null;
+    return { title: message, action: error.detail ?? describeError(error).action };
+  };
 
   const loadSettingsInto = useCallback(async () => {
     const settings = await loadSettings();
@@ -682,7 +703,55 @@ export function useStudyWorkflow() {
         }
         if (view.status !== 'completed') continue;
         if (!view.transcriptId) {
-          failWith(appError('STORAGE_FAILED', '转写完成但没有保存字幕'));
+          // 旧版本可能留下「已完成但没有 transcriptId」的会话，这里做两级自愈：
+          // 先认领「边采边显示」已经写进库的同视频字幕版本，认领不到再用会话内的分片补存。
+          const existing = (await listTranscripts(video.id).catch(() => null)) ?? [];
+          const savedAsr = existing
+            .filter((item) => item.sourceKind === 'asr')
+            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0] ?? null;
+          if (savedAsr) {
+            const savedCues = await getCues(savedAsr.id).catch(() => []);
+            if (savedCues.length > 0) {
+              patch({
+                transcript: savedAsr, cues: savedCues, transcripts: existing,
+                translations: new Map(), track: null, summary: null,
+              });
+              setNotice({
+                kind: 'warn',
+                title: `已转写 ${savedCues.length} 条字幕`,
+                detail: '沿用了本次采集过程中已保存的字幕',
+              });
+              break;
+            }
+          }
+          const recoveryCues = cuesFromAsrSegments(view.segments ?? []);
+          if (recoveryCues.length > 0) {
+            try {
+              const { revision } = await saveTranscript({
+                videoId: video.id,
+                language: 'auto',
+                sourceKind: 'asr',
+                generationKind: 'ai',
+                trackLabel: `本地转写（补存） · ${view.model}`.slice(0, 120),
+                sourceHash: hashTranscript(recoveryCues),
+                cues: recoveryCues,
+              });
+              const transcripts = await listTranscripts(video.id);
+              patch({ transcript: revision, cues: recoveryCues, transcripts, translations: new Map(), track: null, summary: null });
+              setNotice({
+                kind: 'warn',
+                title: `已转写 ${recoveryCues.length} 条字幕`,
+                detail: '转写结束后补存成功',
+              });
+              break;
+            } catch (cause) {
+              failWith(toAppError(cause, 'STORAGE_FAILED', '保存转写结果失败'), '本地保存失败');
+              break;
+            }
+          }
+          failWith(appError('STORAGE_FAILED', '本次转写没有可保存的字幕', {
+            detail: '会话里没有保留任何转写分片，请重新开始一次音频转写。',
+          }));
           break;
         }
         const transcripts = await listTranscripts(video.id);

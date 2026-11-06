@@ -42,7 +42,8 @@ export function decideTrigger(input: {
     return { fire: false, index: -1, reason: 'invalid-progress' };
   }
   const position = Math.min(input.positionMs, input.durationMs);
-  const ended = input.ended === true && position >= input.durationMs - 250;
+  // ended 状态由页面脚本直接上报，不再用位置倒推（避免后台刚唤醒时位置滞后导致漏判）
+  const ended = input.ended === true;
   if (input.paused && !ended) return { fire: false, index: -1, reason: 'paused' };
   const index = ended ? Math.ceil(input.durationMs / AUTO_NODE_INTERVAL_MS) - 1 : nodeIndexFor(position);
   if (index < 0) return { fire: false, index, reason: 'not-started' };

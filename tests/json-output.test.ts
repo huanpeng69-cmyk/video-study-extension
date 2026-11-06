@@ -168,6 +168,22 @@ describe('全角引号的结构位归一化', () => {
     const raw = '{“title”:“测试主题”,“paragraphs”:[{“text”:“第一行\\n第二行”,“sourceCueIds”:[“c0”]}],“bullets”:[]}';
     expect(parseJsonPayload(raw)).toEqual({ ...section, paragraphs: [{ text: '第一行\n第二行', sourceCueIds: ['c0'] }] });
   });
+
+  it('说明文字后的全角引号 JSON 不能在字符串内的括号处被截断', () => {
+    const raw = '以下是结果：\\n{“title”:“测试主题”,“paragraphs”:[{“text”:“含}括号”,“sourceCueIds”:[“c0”]}],“bullets”:[]}';
+    expect(parseJsonPayload(raw)).toEqual({
+      ...section,
+      paragraphs: [{ text: '含}括号', sourceCueIds: ['c0'] }],
+    });
+  });
+
+  it('全角字符串里的半角引号是内容，不能提前结束字符串', () => {
+    const raw = '{“title”:“测试主题”,“paragraphs”:[{“text”:“他说\\"原话\\"”,“sourceCueIds”:[“c0”]}],“bullets”:[]}';
+    expect(parseJsonPayload(raw)).toEqual({
+      ...section,
+      paragraphs: [{ text: '他说"原话"', sourceCueIds: ['c0'] }],
+    });
+  });
 });
 
 describe('结构位非 ASCII 空白（kind=syntax 的另一种真实成因）', () => {

@@ -200,7 +200,7 @@ export function LibraryApp() {
           </div>
 
           {items.length === 0 ? (
-            <div className="empty">还没有资料。在 B站视频页打开扩展并保存笔记后会出现在这里。</div>
+            <div className="empty">还没有资料。</div>
           ) : (
             <ul className="cue-list" style={{ maxHeight: 'none' }}>
               {items.map((item) => (
@@ -261,14 +261,14 @@ export function LibraryApp() {
                 </span>
               </label>
             </div>
-            <p className="hint">备份只包含视频元信息、字幕、译文、总结与笔记，不包含 API Key。恢复前会先预览。</p>
+
             {backup ? (
               <div className="notice warn" style={{ marginTop: 8 }}>
                 <strong>将导入以下内容</strong>
-                视频 {backup.preview.videos} · 字幕版本 {backup.preview.transcripts} · 字幕条目 {backup.preview.cues} · 笔记{' '}
+                视频 {backup.preview.videos}，字幕版本 {backup.preview.transcripts}，字幕条目 {backup.preview.cues}，笔记{' '}
                 {backup.preview.notes}
                 {backup.preview.conflicts > 0
-                  ? ` · 其中 ${backup.preview.conflicts} 条与现有笔记不同，将保留为冲突副本`
+                  ? `，其中 ${backup.preview.conflicts} 条与现有笔记不同，将保留为冲突副本`
                   : ''}
                 <div className="row" style={{ marginTop: 6 }}>
                   <button type="button" className="primary" onClick={() => void applyRestore()} disabled={busy}>

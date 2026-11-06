@@ -6,8 +6,9 @@ const videoId = 'bilibili:BV1GJ411x7h7:111';
 let db: StudyDatabase;
 
 /** 用最小的 chrome.tabs 桩模拟页面脚本回报。 */
-function stubTabs(handlers: { tracks?: unknown; read?: Record<string, unknown> }) {
+function stubTabs(handlers: { tracks?: unknown; read?: Record<string, unknown>; missing?: boolean }) {
   const sendMessage = vi.fn(async (_tabId: number, message: { type: string; payload?: { url?: string } }) => {
+    if (handlers.missing) throw new Error('no receiver');
     if (message.type === 'LIST_PAGE_TRACKS') return handlers.tracks ?? { ok: true, tracks: [] };
     if (message.type === 'READ_PAGE_TRACK') {
       const url = message.payload?.url ?? '';
@@ -88,6 +89,31 @@ describe('静默自动取字幕（弹窗不用打开）', () => {
     await silentFetchCaptions({ ...base, videoId: 'web:https://c.test:/z' });
     await silentFetchCaptions({ ...base, videoId: 'web:https://c.test:/z' });
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('页面脚本尚未就绪时不消耗唯一尝试，探针出现后仍能取到字幕', async () => {
+    const video = 'web:https://late.test:/v';
+    stubTabs({ missing: true });
+    const first = await silentFetchCaptions({ ...base, videoId: video });
+    expect(first).toEqual({ used: false, reason: 'failed' });
+
+    stubTabs({
+      tracks: { ok: true, tracks: [{ url: 'https://site.test/late.vtt', label: '中文', language: 'zh', kind: 'subtitles' }] },
+      read: { 'https://site.test/late.vtt': { ok: true, text: vtt } },
+    });
+    const second = await silentFetchCaptions({ ...base, videoId: video });
+    expect(second.used).toBe(true);
+    expect(second.cues).toBe(2);
+  });
+
+  it('页面脚本持续不可用时最多再试有限次，不无限请求', async () => {
+    const sendMessage = stubTabs({ missing: true });
+    const video = 'web:https://stuck.test:/v';
+    for (let count = 0; count < 5; count += 1) {
+      const outcome = await silentFetchCaptions({ ...base, videoId: video });
+      expect(outcome).toEqual({ used: false, reason: 'failed' });
+    }
+    expect(sendMessage).toHaveBeenCalledTimes(3);
   });
 
   it('页面脚本不可用时安静失败，不抛给调用方', async () => {

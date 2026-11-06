@@ -21,8 +21,7 @@ export const ASR_CAPTURE_CHUNK_MS = 30_000;
 export const ASR_FIRST_CHUNK_MS = 8_000;
 export const ASR_MAX_QUEUED = 4;
 export const ASR_MAX_RECORD_MS = 2 * 60 * 60_000;
-/** 采集峰值低于该值即视为数字静音（约 -54 dBFS）：用来区分「没声音」与「有声音但没识别出字」。 */
-export const ASR_SILENCE_PEAK = 0.002;
+export const ASR_SILENCE_PEAK = 0.0001;
 /** 连续多少个位置采样都读到静音，才认定是真实静音操作；单次读取抖动不足以结束整场录音。 */
 export const ASR_MUTE_CONFIRM_SAMPLES = 2;
 /**

@@ -38,18 +38,15 @@ export function PlaybackBar({ state, disabled, onAction }: Props) {
 
   return (
     <div className="stack" style={{ gap: 6 }}>
-      <div className="row" style={{ gap: 6 }}>
-        {/* 播放状态只做识别，不再提供控制按钮：
-            浏览器自动播放策略要求页面内用户手势，扩展按钮必然被拒绝，
-            留着只会误导用户。暂停时给一句明确说明。 */}
+      <div className="row">
         <span className="hint" role="status" aria-live="polite">
-          {state.paused ? '⏸ 未在播放' : '▶ 播放中'}
+          {state.paused ? '未在播放' : '播放中'}
         </span>
         <span className="hint" style={{ fontVariantNumeric: 'tabular-nums' }}>
           {formatTimecode(shownPositionMs)} / {formatTimecode(state.durationMs)}
         </span>
         <span className="spacer" />
-        <span className="hint">音量 {Math.round(state.volume * 100)}%{state.muted ? '（静音）' : ''}</span>
+        <span className="hint">音量 {Math.round(state.volume * 100)}%{state.muted ? '，静音' : ''}</span>
       </div>
 
       <div className="row" style={{ gap: 8 }}>
@@ -73,12 +70,10 @@ export function PlaybackBar({ state, disabled, onAction }: Props) {
         <span style={{ width: `${percent}%` }} />
       </div>
       {state.paused ? (
-        <p className="hint">视频未在播放。浏览器自动播放策略要求先在视频页面上点一次播放，扩展按钮无法代替。</p>
+        <p className="hint">视频未在播放。自动播放策略要求先在视频页面上点一次播放，扩展按钮无法代替。</p>
       ) : null}
-      {!state.ready ? <p className="hint">等待播放器状态…（在视频页播放一下即可同步）</p> : null}
-      {state.ready && !knownDuration ? (
-        <p className="hint">尚未取到视频时长，进度暂不可拖动；播放几秒后会自动就绪。</p>
-      ) : null}
+      {!state.ready ? <p className="hint">等待播放器</p> : null}
+      {state.ready && !knownDuration ? <p className="hint">尚未取到视频时长，暂不可跳转</p> : null}
     </div>
   );
 }

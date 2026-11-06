@@ -44,7 +44,7 @@ function Block({
   if (kind === 'bullet') {
     return (
       <p className="summary-point">
-        · {block.text} {cite}
+        {block.text} {cite}
       </p>
     );
   }
@@ -126,7 +126,7 @@ export function SummaryPanel({ summary, cueIndex, onSeek, onInsert, live = false
 
       <div className="row">
         <span className="hint">
-          基于字幕整理 · {summary.providerSnapshot.modelId} · {new Date(summary.createdAt).toLocaleString()}
+          基于字幕整理，{summary.providerSnapshot.modelId}，{new Date(summary.createdAt).toLocaleString()}
         </span>
         <span className="spacer" />
         <button type="button" onClick={() => onInsert(toMarkdown())}>

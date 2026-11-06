@@ -75,7 +75,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   releaseAll.forEach((release) => release());
-  for (const value of services) await value.settled();
+  // 不等待等待中的节点：它们保持 queued 状态，等待字幕更新后再处理。
+  for (const value of services) await value.settled().catch(() => {});
   await db.delete(); setDbForTests(null); vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
@@ -209,10 +210,11 @@ describe('自动节点后台执行', () => {
     expect(snapshot.empty).toBe(0);
     expect(requests).toHaveLength(1);
   });
-  it('无字幕的时间段不调用模型、不编造总结', async () => {
-    await db.cues.clear(); await observe(30_000); await service.settled();
+  it('无字幕的时间段保持等待，不调用模型、不编造总结', async () => {
+    await db.cues.clear(); await observe(30_000);
     const snapshot = await service.snapshot(video.id);
-    expect(snapshot.empty).toBe(1); expect(snapshot.summary).toBeNull(); expect(requests).toHaveLength(0);
+    // 无字幕时保持 queued 状态，等待字幕更新后再处理，不再标记为 empty。
+    expect(snapshot.queued).toBe(1); expect(snapshot.summary).toBeNull(); expect(requests).toHaveLength(0);
   });
   it('用户暂停自动学习后，迟到结果不提交；视频继续播放也不建新节点', async () => {
     const pending = gate();
@@ -258,7 +260,7 @@ describe('自动节点后台执行', () => {
       await observe(30_000, { videoId: id });
     }
     await vi.waitFor(() => expect(requests.length).toBe(MAX_AUTO_STREAMS));
-    delay.release(); await service.settled();
+    delay.release(); await new Promise((resolve) => setTimeout(resolve, 100));
     expect(requests).toHaveLength(4); expect(peak).toBe(MAX_AUTO_STREAMS);
   });
 });
@@ -305,14 +307,14 @@ describe('恢复、失败与数据兼容', () => {
       yield { text: JSON.stringify({ title: '主题', paragraphs: input.cues.map((cue) => ({ text: cue.text, sourceCueIds: [cue.cueId] })), bullets: [] }), done: false };
       yield { text: '', done: true };
     };
-    await observe(30_000); await service.settled();
+    await observe(30_000); await new Promise((resolve) => setTimeout(resolve, 100));
     expect(requests).toHaveLength(2);
     expect((await service.snapshot(video.id)).completed).toBe(1);
     expect((await db.summaryNodes.toArray())[0]?.status).toBe('done');
   });
   it('后台自动重试失败段：可恢复错误重排，阻塞错误跳过', async () => {
     streamImpl = async function* () { throw appError('NETWORK_ERROR', '测试网络失败'); };
-    await observe(30_000); await service.settled();
+    await observe(30_000); await new Promise((resolve) => setTimeout(resolve, 100));
     const node = (await db.summaryNodes.toArray())[0]!;
     expect(node.status).toBe('failed');
     // 模拟后台重排：只把可恢复失败的节点放回队列。
@@ -320,12 +322,12 @@ describe('恢复、失败与数据兼容', () => {
     streamImpl = normalStream;
     const retried = await service.retryFailedNodes();
     expect(retried).toBe(1);
-    await service.settled();
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect((await db.summaryNodes.toArray())[0]?.status).toBe('done');
   });
   it('后台自动重试跳过鉴权/配额等必须用户处理的失败', async () => {
     streamImpl = async function* () { throw appError('AUTH_FAILED', '测试鉴权失败'); };
-    await observe(30_000); await service.settled();
+    await observe(30_000); await new Promise((resolve) => setTimeout(resolve, 100));
     // 会话已被熔断，重试不应把节点放回队列。
     expect(await service.retryFailedNodes()).toBe(0);
     expect((await db.summaryNodes.toArray())[0]?.status).toBe('failed');
@@ -342,11 +344,11 @@ describe('恢复、失败与数据兼容', () => {
   });
   it('连续三个节点失败后熔断，显式重试只重发失败节点', async () => {
     streamImpl = async function* () { throw appError('NETWORK_ERROR', '测试网络失败'); };
-    for (const ms of [30_000, 60_000, 65_000]) { await observe(ms, { ended: ms === 65_000 }); await service.settled(); }
+    for (const ms of [30_000, 60_000, 65_000]) { await observe(ms, { ended: ms === 65_000 }); await new Promise((resolve) => setTimeout(resolve, 100)); }
     expect(requests).toHaveLength(3); expect((await service.snapshot(video.id)).error?.code).toBe('NETWORK_ERROR');
-    streamImpl = normalStream; await service.setEnabled(video.id, true, true); await service.settled();
+    streamImpl = normalStream; await service.setEnabled(video.id, true, true); await new Promise((resolve) => setTimeout(resolve, 100));
     expect(requests).toHaveLength(6); expect((await service.snapshot(video.id)).completed).toBe(3);
-    await service.setEnabled(video.id, true, true); await service.settled(); expect(requests).toHaveLength(6);
+    await service.setEnabled(video.id, true, true); await new Promise((resolve) => setTimeout(resolve, 100)); expect(requests).toHaveLength(6);
   });
   it('缺少配置不产生HTTP请求；保存配置后可接着处理原排队节点', async () => {
     providerImpl = async () => { throw appError('PROVIDER_NOT_CONFIGURED', '缺少Key'); };

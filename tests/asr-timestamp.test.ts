@@ -46,4 +46,14 @@ describe('本地 Whisper 时间戳边界', () => {
     expect(() => normalizeLocalSegments({ text: '只有文字' }, 0, 30_000))
       .toThrowError(/缺少真实分段时间戳/);
   });
+
+  it('已量到真实音频时长时不再追加 1.5 秒，避免尾句进入下一片', () => {
+    expect(() => normalizeLocalSegments(payload([
+      { start: 31.2, end: 31.4, text: '越界' },
+    ]), 0, 30_000, { measured: true })).toThrowError(/超出实际录音片段/);
+    const kept = normalizeLocalSegments(payload([
+      { start: 30.1, end: 30.4, text: '末句' },
+    ]), 60_000, 30_400, { measured: true });
+    expect(kept[0]).toMatchObject({ startMs: 90_100, endMs: 90_400 });
+  });
 });

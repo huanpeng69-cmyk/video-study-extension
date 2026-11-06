@@ -67,7 +67,7 @@ export function OptionsApp() {
         maxTokens: 64,
       });
       const usage = result.usage.totalTokens === null ? '用量未知' : `${result.usage.totalTokens} tokens`;
-      setMessage({ kind: 'ok', text: `连接成功：${endpoint.requestUrl} · ${result.model || settings.provider.modelId} · ${usage}` });
+      setMessage({ kind: 'ok', text: `连接成功：${endpoint.requestUrl}，${result.model || settings.provider.modelId}，${usage}` });
     } catch (error) {
       const normalized = toAppError(error);
       const described = describeError(normalized);
@@ -145,7 +145,7 @@ export function OptionsApp() {
                 >
                   使用 Agnes 预设
                 </button>
-                <span className="hint">也可填写其他 OpenAI 兼容服务</span>
+
               </div>
               <label className="field">
                 服务名称
@@ -158,7 +158,7 @@ export function OptionsApp() {
                 />
               </label>
               <label className="field">
-                API 基地址（不含 /chat/completions）
+                API 基地址
                 <input
                   type="text"
                   value={settings.provider.baseUrl}
@@ -170,7 +170,7 @@ export function OptionsApp() {
               </label>
               <p className="hint">实际请求地址：{endpointPreview || '地址无效'}</p>
               <label className="field">
-                模型 ID（以你的账户实际可用为准）
+                模型 ID
                 <input
                   type="text"
                   value={settings.provider.modelId}
@@ -187,9 +187,7 @@ export function OptionsApp() {
                   onChange={(event) => setSettings((prev) => ({ ...prev, targetLanguage: event.target.value }))}
                 />
               </label>
-              <p className="hint">
-                音频转写不经过上面的对话服务：声音只在本机由 Whisper 转成文字，不上传云端，也不需要 API Key。
-              </p>
+
               <label className="field">
                 API Key
                 <input
@@ -213,9 +211,7 @@ export function OptionsApp() {
                 />
                 在此浏览器记住 Key（写入本地存储，不是系统密钥库）
               </label>
-              <p className="hint">
-                默认只在当前浏览器会话保存；扩展更新或浏览器重启后需要重新填写。Key 不会进入笔记、备份或日志。
-              </p>
+
             </div>
           </div>
 
@@ -225,7 +221,7 @@ export function OptionsApp() {
               <button type="button" onClick={() => void requestHostPermission()} disabled={busy}>
                 授权该模型域名
               </button>
-              <span className="hint">仅授权当前服务域名，不是所有网站</span>
+              <span className="hint">仅当前服务域名</span>
             </div>
           </div>
 
@@ -278,10 +274,7 @@ export function OptionsApp() {
                     <option value="small">small（准，约 0.7× 实时，可能跟不上播放）</option>
                   </select>
                 </label>
-                <p className="hint">
-                  实测：<code>tiny</code> 转 60 秒音频约 12.6 秒；<code>small</code> 约 43.6 秒（纯 CPU）。
-                  选 <code>small</code> 时若转写速度低于播放速度，录音队列积压后会停止并保留已完成部分。
-                </p>
+
               </>
             ) : null}
             <label className="field">
@@ -299,11 +292,7 @@ export function OptionsApp() {
               <button type="button" onClick={() => void testLocalWhisper()} disabled={busy}>
                 测试本地转写
               </button>
-              <span className="hint">
-                {settings.localWhisper.backend === 'whishper'
-                  ? '确保 Docker 中的 whishper 容器已启动；音频只在本机处理。'
-                  : <>先运行 <code>scripts/start-local-whisper.ps1</code>；音频只在本机处理，不消耗云端额度。</>}
-              </span>
+              <span className="hint">音频只在本机处理</span>
             </div>
           </div>
 
@@ -314,7 +303,7 @@ export function OptionsApp() {
                 onChange={(event) => setSettings((previous) => ({ ...previous, consentAcknowledged: event.target.checked }))} />
               允许按播放进度自动发送当前字幕片段到上述服务
             </label>
-            <p className="hint">每 30 秒一个节点，使用当前对话模型的 SSE 接口，可能计费。关闭弹窗不会停止；可在自动学习页暂停。只发送视频标题与当前片段字幕，不发送 B站登录信息或手写笔记。勾选后请保存设置。</p>
+            <p className="hint">每 30 秒一个节点，可能计费。关闭弹窗不会停止。只发送标题与当前字幕。</p>
           </div>
 
           <div className="row">

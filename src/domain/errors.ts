@@ -111,8 +111,27 @@ export function describeError(error: AppError): { title: string; action: string 
       return { title: '本地语音转写服务未启动', action: '运行本地转写启动脚本，再在设置中测试连接' };
     case 'LOCAL_WHISPER_ERROR':
       return { title: '本地语音转写失败', action: '检查本地服务的模型和运行环境，不会自动回退云端' };
-    case 'CAPTURE_UNAVAILABLE':
-      return { title: '标签页音频采集不可用', action: '请在 Chrome/Edge 116+ 的视频标签页点扩展并授权；确认音频正在播放' };
+    case 'CAPTURE_UNAVAILABLE': {
+      // 标题决定「有解」还是「死路」：按后台给出的具体原因分别提示，
+      // 否则所有采集失败看起来一模一样，用户无法据此行动。
+      const from = error.message ?? '';
+      if (from.includes('还没有获得采集许可')) {
+        return {
+          title: '这个标签页还没获得采集许可',
+          action: '先在这个视频标签页点一次扩展图标，再点「从音频转写」。',
+        };
+      }
+      if (from.includes('没有返回标签页音频标识')) {
+        return { title: '浏览器没有返回音频标识', action: '在这个视频标签页点一次扩展图标后立刻重试。' };
+      }
+      if (from.includes('无法获取标签页音频')) {
+        return { title: '无法获取标签页音频', action: error.detail ?? '浏览器拒绝了这次采集请求。' };
+      }
+      if (from.includes('没有采集标签页音频的权限')) {
+        return { title: '扩展没有采集标签页音频的权限', action: error.detail ?? '在扩展管理页确认已授权 tabCapture。' };
+      }
+      return { title: error.message || '标签页音频采集不可用', action: error.detail ?? '确认视频在该标签页可见并正在播放。' };
+    }
     case 'NO_SPEECH':
       return { title: '未识别到语音', action: '声音已采集但模型没有识别出文字；可换用更准确的模型后重试' };
     case 'CAPTURE_SILENT':

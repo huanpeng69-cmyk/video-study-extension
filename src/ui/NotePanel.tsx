@@ -38,7 +38,7 @@ export function NotePanel({ markdown, saveState, disabled, onChange, onExport, o
   return (
     <div className="stack">
       <div className="row">
-        <span className="hint">Markdown 编辑，停止输入后自动保存</span>
+        <span className="hint">停止输入后自动保存</span>
         <span className="spacer" />
         <button type="button" className="ghost" onClick={() => setShowPreview((prev) => !prev)}>
           {showPreview ? '返回编辑' : '预览'}

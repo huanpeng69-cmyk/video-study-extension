@@ -16,7 +16,7 @@ export function AutoSummaryStatus({ snapshot, ready, busy, connectionError, onCo
 }) {
   return (
     <div className="section">
-      <h2>SSE 自动学习 · 每 30 秒</h2>
+      <h2>自动学习，每 30 秒</h2>
       <p role="status">{snapshot?.message ?? (ready ? '正在连接后台…' : '请先获取、导入或转写字幕')}</p>
       {aiReady === false ? (
         <div className="notice warn" role="alert" style={{ marginTop: 8 }}>
@@ -27,8 +27,7 @@ export function AutoSummaryStatus({ snapshot, ready, busy, connectionError, onCo
           </div>
         </div>
       ) : null}
-      <p className="hint">随播放追加独立小节。弹窗关闭仍继续，正文校验通过后自动保存，可在笔记中导出。</p>
-      {snapshot ? <p className="hint">已保存 {snapshot.completed}/{snapshot.total} 个节点 · 排队 {snapshot.queued} · 失败 {snapshot.failed} · 无字幕 {snapshot.empty}</p> : null}
+      {snapshot ? <p className="hint">已保存 {snapshot.completed}/{snapshot.total}，排队 {snapshot.queued}，失败 {snapshot.failed}，无字幕 {snapshot.empty}</p> : null}
       <div className="row" style={{ marginTop: 8 }}>
         <button type="button" disabled={!ready || !snapshot || busy} onClick={() => onControl(!snapshot?.enabled)}>
           {snapshot?.enabled === false ? '继续自动学习' : '暂停自动学习'}
@@ -44,7 +43,7 @@ export function AutoSummaryStatus({ snapshot, ready, busy, connectionError, onCo
         {snapshot.error.detail ? <div className="hint">{snapshot.error.detail}</div> : null}
         <div className="hint">{describeError(snapshot.error).action}</div>
       </div> : null}
-      {snapshot && snapshot.failed > 0 ? <p className="hint">失败段未作为正式内容保存；重试可能再次计费，已完成段不会重发。</p> : null}
+      {snapshot && snapshot.failed > 0 ? <p className="hint">失败段未保存。重试可能再次计费，已完成段不会重发。</p> : null}
       {connectionError ? <div className="notice warn" role="alert" style={{ marginTop: 8 }}>{connectionError}</div> : null}
     </div>
   );
@@ -70,12 +69,12 @@ export function StreamingSummaryDraft({ node, onSeek }: { node: LiveSummaryNode 
   const text = typed.key === key ? typed.text : '';
   return (
     <div className={`section stream-draft${node.status === 'failed' ? ' stream-failed' : ''}`} data-testid="stream-draft">
-      <h2>节点 {node.index} · <button type="button" className="cite" onClick={() => onSeek(node.startMs)}>
+      <h2>节点 {node.index} <button type="button" className="cite" onClick={() => onSeek(node.startMs)}>
         {formatTimecode(node.startMs)}–{formatTimecode(node.endMs)}
       </button></h2>
       <p className="hint" role="status">
-        {node.status === 'streaming' ? '流式草稿 · 正在接收，引用尚未校验' :
-          node.status === 'queued' ? '等待后台读取此节点' : node.status === 'empty' ? '本时间段没有可用字幕，未请求模型' : '本节点失败 · 草稿未进入正式笔记'}
+        {node.status === 'streaming' ? '正在接收，引用尚未校验' :
+          node.status === 'queued' ? '等待后台读取此节点' : node.status === 'empty' ? '本时间段没有可用字幕，未请求模型' : '本节点失败，草稿未进入正式笔记'}
       </p>
       {text ? <div className="stream-text">{text}{node.status === 'streaming' ? <span aria-hidden="true">▍</span> : null}</div> : null}
       {node.error ? <div className="notice error" role="alert">
@@ -84,7 +83,7 @@ export function StreamingSummaryDraft({ node, onSeek }: { node: LiveSummaryNode 
       </div> : null}
       {node.failureResponse ? <details style={{ marginTop: 8 }}>
         <summary>查看失败返回（仅本机）</summary>
-        <p className="hint">这是模型原始正文，未通过校验。反馈前请隐去私密内容，不要发送 API Key；本扩展不会自动上传诊断。</p>
+        <p className="hint">未通过校验的原始正文，仅保存在本机，不会自动上传诊断。</p>
         <pre className="stream-text">{node.failureResponse.text}</pre>
         {node.failureResponse.truncated ? <p className="hint">仅显示前 8000 字符。</p> : null}
       </details> : null}

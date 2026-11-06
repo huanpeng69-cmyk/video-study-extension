@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hashTranscript } from '../src/domain/transcript';
 import { StudyDatabase, getCues, getNote, listLibrary, replaceTranscriptCues, saveNote, saveTranscript, saveTranslation, setDbForTests, upsertVideo } from '../src/storage/db';
 import type { VideoRecord } from '../src/storage/types';
 
@@ -140,6 +141,14 @@ describe('本地仓储', () => {
     expect(updated.cueCount).toBe(3);
     expect((await getCues(revision.id)).map((cue) => cue.startMs)).toEqual([0, 1000, 130_000]);
     // 旧版本不能被复制成第二个版本：库里仍只有这一版。
+    expect(await db.transcripts.count()).toBe(1);
+    // 结束时后台按全部分片的哈希再存一次：必须复用这一版，而不是把整段再写一份。
+    const final = await saveTranscript({
+      videoId: video.id, language: 'auto', sourceKind: 'asr', generationKind: 'ai',
+      trackLabel: '本地转写', sourceHash: hashTranscript(grown), cues: grown,
+    });
+    expect(final.reused).toBe(true);
+    expect(final.revision.id).toBe(revision.id);
     expect(await db.transcripts.count()).toBe(1);
   });
 

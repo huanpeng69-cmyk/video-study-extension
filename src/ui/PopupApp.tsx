@@ -65,8 +65,45 @@ export function PopupApp() {
     download(buildSrt(state.cues), `${safeFileName(state.video.title)}.srt`, 'text/plain;charset=utf-8');
   }, [download, state.cues, state.video]);
 
+  /**
+   * 字幕页的直接出口：不依赖 AI、不依赖笔记页，选中几条就导出几条。
+   * 不选时导出全部，避免「必须有选中项才能点」的判断成本。
+   */
+  const exportCues = useCallback(
+    (selected: Cue[]) => {
+      const source = selected.length > 0 ? selected : state.cues;
+      if (source.length === 0) return;
+      download(buildSrt(source), `${safeFileName(state.video?.title ?? '字幕')}.srt`, 'text/plain;charset=utf-8');
+    },
+    [download, state.cues, state.video],
+  );
+
+  const copyCues = useCallback(
+    (selected: Cue[]) => {
+      const source = selected.length > 0 ? selected : state.cues;
+      if (source.length === 0) return;
+      const text = source
+        .map((cue) => {
+          const translation = state.translations.get(cue.cueId);
+          const line = `[${formatTimecode(cue.startMs)}] ${cue.text}`;
+          return translation ? `${line}\n${translation}` : line;
+        })
+        .join('\n');
+      void navigator.clipboard
+        .writeText(text)
+        .then(() => actions.setNotice({ kind: 'ok', title: `已复制 ${source.length} 条字幕` }))
+        .catch(() => {
+          // 剪贴板被拒时不留假成功：直接指向可用的替代路径。
+          actions.setNotice({ kind: 'warn', title: '复制失败', detail: '浏览器拒绝了剪贴板写入，请改用下载 SRT。' });
+        });
+    },
+    [actions, state.cues, state.translations],
+  );
+
+  /** 选中的字幕按引用块写入笔记（带时间戳，译文附在下一行）。 */
   const insertCues = useCallback(
     (cues: Cue[]) => {
+      if (cues.length === 0) return;
       const block = cues
         .map((cue) => {
           const translation = state.translations.get(cue.cueId);
@@ -79,7 +116,6 @@ export function PopupApp() {
     },
     [actions, state.noteMarkdown, state.translations],
   );
-
   const insertSummary = useCallback(
     (markdown: string) => {
       actions.updateNote(`${state.noteMarkdown.trimEnd()}\n\n${markdown}\n`.trimStart());
@@ -162,16 +198,13 @@ export function PopupApp() {
           </div>
         )}
 
-        <div className="section" style={{ marginTop: 10, marginBottom: 0 }}>
-          <h2>播放状态与画面</h2>
+        <div className="section" style={{ marginTop: 12, marginBottom: 0 }}>
+          <h2>播放</h2>
           <PlaybackBar
             state={state.playback}
             disabled={false}
             onAction={onPlayback}
           />
-          <p className="hint" style={{ marginTop: 6 }}>
-            播放状态自动识别（每 2 秒同步）；进度跳转可直接拖动。播放/静音请在视频页面上操作——浏览器自动播放策略要求页面内用户手势，扩展按钮无法代替。
-          </p>
           <div className="row" style={{ marginTop: 8 }}>
             <button type="button" onClick={() => void actions.screenshot()} disabled={!state.video}>
               截图当前画面
@@ -188,15 +221,13 @@ export function PopupApp() {
                   放弃
                 </button>
               </>
-            ) : (
-              <span className="hint">截取视频画面（不含弹幕）</span>
-            )}
+            ) : null}
           </div>
           {state.frame ? (
             <img
               src={state.frame.dataUrl}
               alt={`当前画面 ${formatTimecode(state.frame.positionMs)}`}
-              style={{ marginTop: 8, width: '100%', borderRadius: 8, border: '1px solid var(--border)' }}
+              className="frame"
             />
           ) : null}
         </div>
@@ -220,18 +251,20 @@ export function PopupApp() {
             <strong>{state.notice.title}</strong>
             {state.notice.detail ? <span>{state.notice.detail}</span> : null}
             {state.notice.action ? <div className="hint">{state.notice.action}</div> : null}
+            {/* 原始错误单独显示：标题是给人看的概括，定位问题要看浏览器原话。 */}
+            {state.notice.raw ? <div className="hint" style={{ wordBreak: 'break-all' }}>浏览器原始错误：{state.notice.raw}</div> : null}
           </div>
         ) : null}
         {state.settings && !state.settings.consentAcknowledged ? (
-          <div className="notice" style={{ marginBottom: 10 }}>
-            自动学习需要允许按播放进度发送字幕到你配置的模型服务（可能计费）。
-            <button type="button" className="ghost" onClick={() => openExtensionPage('options')}>前往设置确认</button>
+          <div className="notice" style={{ marginBottom: 8 }}>
+            自动学习会把当前字幕发送到已配置的模型服务，可能计费。
+            <button type="button" className="ghost" onClick={() => openExtensionPage('options')}>前往设置</button>
           </div>
         ) : null}
         {state.sitePermission ? (
-          <div className="notice warn" role="alert" style={{ marginBottom: 10 }}>
-            <strong>需要在 {state.sitePermission} 上启用识别</strong>
-            授权后会在该站点按需注入识别脚本：只读取播放器状态与页面自身的字幕轨道，不读取页面业务数据。
+          <div className="notice warn" role="alert" style={{ marginBottom: 8 }}>
+            <strong>需要访问 {state.sitePermission}</strong>
+            仅读取播放器状态和页面字幕。
             <div className="row" style={{ marginTop: 6 }}>
               <button type="button" className="primary" onClick={() => void actions.grantSiteAccess(state.sitePermission as string)}>
                 允许访问此网站
@@ -279,11 +312,7 @@ export function PopupApp() {
                   </span>
                 </label>
               </div>
-              <p className="hint" style={{ marginTop: 6 }}>
-                点「从音频转写」时会先自动尝试页面已有字幕（站方/人工字幕最准且无需录
-                音）；只有都没有时才实时采集音频——10 分钟视频约需 10 分钟，期间视频会按 1
-                倍速播放并出声。中途暂停不会丢掉已转写内容，恢复播放会自动续录。
-              </p>
+
               {state.video?.platform === 'bilibili' && state.tracks.length > 0 ? (
                 <div className="row" style={{ marginTop: 6 }}>
                   {state.tracks.map((track) => (
@@ -310,16 +339,15 @@ export function PopupApp() {
                   >
                     {state.transcripts.map((revision) => (
                       <option key={revision.id} value={revision.id}>
-                        {revision.trackLabel || revision.language} · {revision.cueCount} 条
+                        {revision.trackLabel || revision.language}，{revision.cueCount} 条
                       </option>
                     ))}
                   </select>
                 </div>
               ) : null}
               {state.transcript ? (
-                <p className="hint" style={{ marginTop: 6 }}>
-                  当前：{state.transcript.trackLabel || state.transcript.language} · {state.transcript.cueCount} 条 · 来源{' '}
-                  {state.transcript.sourceKind} / {state.transcript.generationKind}
+                <p className="hint">
+                  {state.transcript.trackLabel || state.transcript.language}，{state.transcript.cueCount} 条，{state.transcript.sourceKind} / {state.transcript.generationKind}
                 </p>
               ) : null}
             </div>
@@ -331,6 +359,8 @@ export function PopupApp() {
               positionMs={state.playback.ready ? state.playback.positionMs : null}
               onSeek={(positionMs) => void actions.seek(positionMs)}
               onInsert={insertCues}
+              onCopy={copyCues}
+              onDownload={exportCues}
             />
 
             <div className="row">
@@ -363,7 +393,6 @@ export function PopupApp() {
               >
                 从字幕直接总结（全部 {state.cues.length} 条）
               </button>
-              <span className="hint">按字幕多少全部总结，结果写入总结并追加到笔记。</span>
             </div>
             <SummaryPanel
               summary={state.summary}
@@ -403,7 +432,7 @@ export function PopupApp() {
           </>
         ) : (
           <>
-            <span>{state.autoSummary?.draft?.status === 'streaming' ? 'SSE 后台读取中 · 可关闭弹窗' : state.apiKeyPresent ? 'AI 已配置' : 'AI 未配置，本地功能可用'}</span>
+            <span>{state.autoSummary?.draft?.status === 'streaming' ? '后台读取中，可关闭弹窗' : state.apiKeyPresent ? '模型已配置' : '模型未配置'}</span>
             <span className="spacer" />
             <span>{state.video ? `${state.transcripts.length} 个字幕版本` : ''}</span>
           </>

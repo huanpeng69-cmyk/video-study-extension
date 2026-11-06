@@ -8,7 +8,7 @@ import { buildPlayerInfoUrl, classifyTracks, fetchSubtitleBody, parseTrackRespon
 import { appError, toAppError, type AppError } from '../domain/errors';
 import { normalizeEndpoint } from '../domain/endpoint';
 import { cuesFromAsrSegments, hashTranscript, inferGenerationKind } from '../domain/transcript';
-import { saveTranscript } from '../storage/db';
+import { listTranscripts, saveTranscript } from '../storage/db';
 import { deriveWebVideoIdentity, parseBilibiliVideoUrl, videoIdOf, videoRecordId, type VideoPlatform } from '../domain/video';
 import { isPlaybackForContext, isTrustedExtensionSender, PROTOCOL_VERSION, type CapturedFrame, type RuntimeResponse, type TabContext, type VideoState } from '../lib/messages';
 import { safeUrl, vsLog } from '../lib/log';
@@ -57,6 +57,53 @@ const asrSeen = new Set<number>();
 const ASR_SESSION_KEY = 'asr.session.v1';
 
 /**
+ * 把 tabCapture 的真实失败文案归类成可操作原因。
+ *
+ * 为什么需要：`getMediaStreamId` 在不同情况下抛的消息各不相同，之前统一 `.catch(() => null)`
+ * 会把「标签页未被调用（没点过扩展图标）」「浏览器版本过低」「标签页已关闭」压成同一句，
+ * 用户按提示点了图标也还是失败。这里按官方文案分别给出下一步。
+ */
+function describeTabCaptureFailure(cause: unknown): { kind: string; message: string; detail: string } {
+  const raw = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+  const text = raw.toLowerCase();
+  // 每条分支都必须带「浏览器原始错误」：穷尽匹配失败时不再退化成一句无法行动的提示。
+  const withRaw = (detail: string) => (raw ? `${detail}（浏览器返回：${raw.slice(0, 200)}）` : detail);
+  if (text.includes('invoked') || text.includes('not been invoked') || text.includes('active tab')) {
+    return {
+      kind: 'not-invoked',
+      message: '这个标签页还没获得采集许可',
+      detail: withRaw('先在这个视频标签页点一次扩展图标，再点「从音频转写」'),
+    };
+  }
+  if (text.includes('cannot be captured') || text.includes('chrome://') || text.includes('chrome-extension')) {
+    return {
+      kind: 'uncapturable-page',
+      message: '当前标签页不允许采集音频',
+      detail: '浏览器内部页、扩展页面和部分受保护页面无法采集，请回到视频播放页面重试。',
+    };
+  }
+  if (text.includes('permission')) {
+    return {
+      kind: 'permission',
+      message: '扩展没有采集标签页音频的权限',
+      detail: withRaw('在扩展管理页确认已授权 tabCapture 权限，然后重新加载扩展'),
+    };
+  }
+  if (text.includes('no tab') || text.includes('invalid tab') || text.includes('tab id')) {
+    return {
+      kind: 'tab-gone',
+      message: '找不到要采集的视频标签页',
+      detail: withRaw('视频标签页可能已关闭或切到别的窗口，请重新打开该视频页'),
+    };
+  }
+  return {
+    kind: 'unknown',
+    message: '无法获取标签页音频',
+    detail: withRaw('浏览器拒绝了这次采集请求，原因见括号内原文'),
+  };
+}
+
+/**
  * 仅供测试：清掉模块级转写内存态，模拟 Service Worker 被回收。
  * 生产代码不会调用它——真实回收时整个模块本来就会重新求值。
  */
@@ -86,6 +133,47 @@ async function persistAsr(): Promise<void> {
 }
 
 /**
+ * 中断恢复：把已完成的分片落成一个字幕版本。
+ * 落库成功前绝不发布 completed —— UI 一旦读到「completed 但没有 transcriptId」，
+ * 就会报「转写完成但没有保存字幕」；失败时保留分片，允许导出或稍后重试。
+ */
+async function commitRecoveredAsr(base: LocalAsrState, kept: TranscriptionSegment[]): Promise<void> {
+  try {
+    const cues = cuesFromAsrSegments([...kept].sort((a, b) => a.startMs - b.startMs));
+    const { revision } = await saveTranscript({
+      videoId: base.videoId, language: 'auto', sourceKind: 'asr', generationKind: 'ai',
+      trackLabel: `本地转写（中断恢复） · ${base.model}`.slice(0, 120),
+      sourceHash: hashTranscript(cues), cues,
+    });
+    localAsr = { ...base, status: 'completed', transcriptId: revision.id };
+    asrSegments = [];
+    asrSeen.clear();
+    vsLog.info('asr:restored-committed', { cues: cues.length });
+  } catch (cause) {
+    const error = toAppError(cause, 'STORAGE_FAILED', '保存中断前的转写结果失败');
+    localAsr = { ...base, status: 'failed', error };
+    vsLog.warn('asr:restore-commit-failed', { code: error.code });
+  }
+}
+
+/**
+ * 找回这个视频已经落库的 ASR 字幕版本。
+ * 「边采边显示」会在采集途中就把分片写成一个版本；SW 被回收后恢复出的旧快照可能丢了
+ * transcriptId，但库里其实已经有这份字幕 —— 认领它，比重写一份或直接报错都正确。
+ */
+async function findSavedAsrRevision(videoId: string): Promise<string | null> {
+  try {
+    const revisions = await listTranscripts(videoId);
+    const newest = revisions
+      .filter((item) => item.sourceKind === 'asr')
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))[0];
+    return newest?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 从 `storage.session` 恢复会话。
  * 只恢复「仍在进行或已完成待展示」的会话；已失败超过一天的不再恢复，避免长期残留。
  */
@@ -101,13 +189,13 @@ async function restoreAsr(): Promise<void> {
       await area.remove(ASR_SESSION_KEY).catch(() => undefined);
       return;
     }
+    const kept = (snapshot.segments ?? []).filter((item) => Number.isFinite(item.startMs) && item.text);
     // 恢复出来的「录音中/转写中」已经没有对应的离屏录音：
     // 不伪装成仍在进行，标成中断，并把中断前已完成的分片立即落成一个字幕版本。
     if (['starting', 'recording', 'transcribing'].includes(snapshot.state.status)) {
-      const kept = (snapshot.segments ?? []).filter((item) => Number.isFinite(item.startMs) && item.text);
-      localAsr = {
+      const interrupted: LocalAsrState = {
         ...snapshot.state,
-        status: kept.length > 0 ? 'completed' : 'failed',
+        status: kept.length > 0 ? 'transcribing' : 'failed',
         queuedChunks: 0,
         updatedAt: Date.now(),
         warnings: [...(snapshot.state.warnings ?? []), '采集被浏览器中断，已保留中断前完成的字幕'],
@@ -115,23 +203,11 @@ async function restoreAsr(): Promise<void> {
           detail: '后台被浏览器回收会停止录音。中断前没有任何完成的分片，请重新开始。',
         }),
       };
+      localAsr = interrupted;
       asrSegments = kept;
       asrSeen.clear();
       for (const index of Array.isArray(snapshot.seen) ? snapshot.seen : []) asrSeen.add(index);
-      if (kept.length > 0) {
-        try {
-          const cues = cuesFromAsrSegments([...kept].sort((a, b) => a.startMs - b.startMs));
-          const { revision } = await saveTranscript({
-            videoId: snapshot.state.videoId, language: 'auto', sourceKind: 'asr', generationKind: 'ai',
-            trackLabel: `本地转写（中断恢复） · ${snapshot.state.model}`.slice(0, 120),
-            sourceHash: hashTranscript(cues), cues,
-          });
-          localAsr = { ...localAsr, transcriptId: revision.id };
-          vsLog.info('asr:restored-committed', { cues: cues.length });
-        } catch (cause) {
-          vsLog.warn('asr:restore-commit-failed', { code: toAppError(cause).code });
-        }
-      }
+      if (kept.length > 0) await commitRecoveredAsr(interrupted, kept);
       await persistAsr();
       return;
     }
@@ -139,6 +215,27 @@ async function restoreAsr(): Promise<void> {
     asrSegments = Array.isArray(snapshot.segments) ? snapshot.segments : [];
     asrSeen.clear();
     for (const index of Array.isArray(snapshot.seen) ? snapshot.seen : []) asrSeen.add(index);
+    // 旧版本曾「先发布 completed、再落库」，可能留下 completed 但没有 transcriptId 的会话。
+    // 这种会话重开后必须自愈，否则每次打开都只会看到「转写完成但没有保存字幕」。
+    if (localAsr.status === 'completed' && !localAsr.transcriptId) {
+      localAsr = { ...localAsr, status: 'transcribing' };
+      // 「边采边显示」在采集途中就写过同视频的字幕版本，先认领库里已有的那份。
+      const adopted = await findSavedAsrRevision(localAsr.videoId);
+      if (adopted) {
+        localAsr = { ...localAsr, status: 'completed', transcriptId: adopted };
+        asrSegments = [];
+        asrSeen.clear();
+        vsLog.info('asr:adopted-saved', { via: 'restore' });
+      } else if (kept.length > 0) {
+        await commitRecoveredAsr(localAsr, kept);
+      } else {
+        // 库里没有、分片也没有：不能继续伪装成「已完成」，给出可执行的下一步。
+        localAsr = { ...localAsr, status: 'failed', error: appError('STORAGE_FAILED', '上次转写已完成，但没有保存下字幕', {
+          detail: '会话里没有可用的转写分片，请重新开始一次音频转写。',
+        }) };
+      }
+      await persistAsr();
+    }
   } catch {
     /* 读不到就当没有会话。 */
   }
@@ -173,20 +270,24 @@ async function handleAsrEvent(id: string, event: CaptureEvent | undefined): Prom
     await persistAsr();
     return;
   }
-  // done：无论成功失败都先关闭离屏文档，释放标签页音频。
-  const finished: LocalAsrState = { ...localAsr, status: event.error ? 'failed' : 'completed',
-    warnings: event.warnings, error: event.error, evidence: event.evidence, updatedAt: Date.now() };
+  // done：先关闭离屏文档释放标签页音频，但不要在字幕落库前把状态标成 completed。
+  // 历史缺陷：曾经先写 completed、再 saveTranscript；UI 轮询正好落在这个窗口里，
+  // 看到「已完成 + 没有 transcriptId」，就误报「转写完成但没有保存字幕」。
+  const finished: LocalAsrState = { ...localAsr,
+    status: event.error ? 'failed' : 'transcribing',
+    warnings: event.warnings, error: event.error, evidence: event.evidence,
+    segments: [...asrSegments].sort((a, b) => a.startMs - b.startMs), updatedAt: Date.now() };
   localAsr = finished;
   await chrome.offscreen.closeDocument().catch(() => undefined);
   const videoId = finished.videoId;
-  const segments = [...asrSegments].sort((a, b) => a.startMs - b.startMs);
-  asrSegments = [];
-  asrSeen.clear();
+  const segments = finished.segments ?? [];
   if (event.error || segments.length === 0) {
     if (!event.error) {
       // 没有任何字幕时按采集证据归因：设备切换、数字静音都不能被说成「页面被静音」。
       localAsr = { ...finished, status: 'failed', error: describeNoSpeech(event.evidence) };
     }
+    asrSegments = [];
+    asrSeen.clear();
     await persistAsr();
     vsLog.warn('asr:done-no-result', {
       code: localAsr?.error?.code ?? 'NO_SPEECH',
@@ -208,10 +309,16 @@ async function handleAsrEvent(id: string, event: CaptureEvent | undefined): Prom
       trackLabel: `本地转写 · ${finished.model}`.slice(0, 120),
       sourceHash: hashTranscript(cues), cues,
     });
+    // 只有真正落库成功才发布 completed，保证 UI 不会读到「完成但没有 transcriptId」。
     localAsr = { ...finished, status: 'completed', transcriptId: revision.id };
+    // 保存成功后才释放可恢复副本；失败时保留，避免一次落库失败丢掉整段转写。
+    asrSegments = [];
+    asrSeen.clear();
     vsLog.info('asr:done', { cues: cues.length, chunks: finished.completedChunks });
   } catch (cause) {
     const error = toAppError(cause, 'STORAGE_FAILED', '保存本地转写结果失败');
+    // 保留 finished.segments 与 asrSegments：重开界面仍能看到转写文字，
+    // 也留有再次落库/导出的机会，而不是只剩一句「保存失败」。
     localAsr = { ...finished, status: 'failed', error };
     vsLog.warn('asr:done-save-failed', { code: error.code });
   }
@@ -505,6 +612,29 @@ export default defineBackground(() => {
       port.postMessage({ type: 'changed', videoId: message.videoId });
     });
     port.onDisconnect.addListener(() => unsubscribe?.());
+  });
+  /**
+   * 让工具栏图标打开常驻侧边栏。
+   *
+   * 关键：必须显式调用 sidePanel.open()，浏览器才会把这次点击计入 activeTab 授权；
+   * 只设置 openPanelOnActionClick 不会触发 tabCapture 所需的授权。
+   */
+  const enableSidePanel = () => {
+    void chrome.sidePanel
+      ?.setPanelBehavior?.({ openPanelOnActionClick: false })
+      .catch((cause) => logFailure('sidepanel:behavior-failed', cause));
+  };
+  enableSidePanel();
+  /**
+   * 显式调用 sidePanel.open()，浏览器会把这次点击计入 activeTab 授权。
+   */
+  chrome.action?.onClicked?.addListener((tab) => {
+    if (typeof tab.id !== 'number') return;
+    if (typeof chrome.sidePanel?.open === 'function') {
+      void chrome.sidePanel
+        .open({ tabId: tab.id })
+        .catch((cause) => logFailure('sidepanel:open-failed', cause));
+    }
   });
   ensureHeartbeat();
   resumeSafely();
@@ -822,13 +952,23 @@ export default defineBackground(() => {
             const health = await checkLocalWhisper(settings.localWhisper).catch((cause) => {
               throw toAppError(cause, 'LOCAL_WHISPER_UNAVAILABLE', '本地语音转写服务不可用');
             });
-            const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: asrTabId })
-              .catch(() => null);
-            if (!streamId) {
+            let streamId: string | null = null;
+            try {
+              streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: asrTabId });
+            } catch (cause) {
+              const reason = describeTabCaptureFailure(cause);
+              vsLog.warn('asr:stream-id-failed', { reason: reason.kind, message: reason.message });
               return {
                 ok: false,
-                error: appError('CAPTURE_UNAVAILABLE', '无法获取标签页音频', {
-                  detail: '请在该视频标签页点击扩展图标后再转写（浏览器要求用户手势），并确认浏览器为 Chrome/Edge 116+。',
+                error: appError('CAPTURE_UNAVAILABLE', reason.message, { detail: reason.detail }),
+              };
+            }
+            if (!streamId) {
+              vsLog.warn('asr:stream-id-empty', { reason: 'empty' });
+              return {
+                ok: false,
+                error: appError('CAPTURE_UNAVAILABLE', '浏览器没有返回标签页音频标识', {
+                  detail: '请在这个视频标签页再点一次扩展图标，然后立刻点「从音频转写」。',
                 }),
               };
             }
@@ -841,6 +981,9 @@ export default defineBackground(() => {
             };
             localAsr = state;
             asrSegments = [];
+            // 新一轮采集必须重置分片去重表：上一次保存失败会保留 seen，
+            // 否则新会话的 0、1、2… 号分片会被当成重复直接丢弃，表现为「进度在走但一个字不出」。
+            asrSeen.clear();
             const sample = TAB_STATES.get(asrTabId) ?? defaultVideoState(context.positionMs, context.durationMs);
             const started = (await chrome.runtime.sendMessage({
               target: ASR_OFFSCREEN_TARGET, type: 'start',

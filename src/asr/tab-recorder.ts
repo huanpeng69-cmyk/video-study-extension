@@ -273,7 +273,13 @@ export class TabAudioRecorder {
     if (this.part) {
       this.part.discard = discard;
       this.part.endMs = endMs;
-      if (this.part.recorder.state !== 'inactive') this.part.recorder.stop();
+      // recorder.stop() 是异步的：先标记停止，等 recorder 的 stop 事件完成后再 finish()。
+      if (this.part.recorder.state !== 'inactive') {
+        this.part.recorder.stop();
+      } else {
+        // recorder 已停止但分片数据可能还在 blobs 里，直接处理。
+        void this.finish();
+      }
     } else void this.finish();
     this.progress();
   }
@@ -416,8 +422,11 @@ export class TabAudioRecorder {
         // 于是 Whisper 的最后一句起点可能「超出」durationMs 而被错判为越界。
         // 这里先量出这片的真实音频时长当校验上限；量不出来就退回原估算。
         const audioMs = await measureAudioMs(audio);
-        const limitMs = audioMs > 0 ? Math.max(Math.round(audioMs), 1) : durationMs;
-        const segments = await transcribeLocalAudio({ config: this.input.config, audio, offsetMs, durationMs: limitMs });
+        const measured = audioMs > 0;
+        const limitMs = measured ? Math.max(Math.round(audioMs), 1) : durationMs;
+        const segments = await transcribeLocalAudio({
+          config: this.input.config, audio, offsetMs, durationMs: limitMs, measured,
+        });
         // 把「这一片有多少字节、多长、识别出几条」记录下来：
         // 「进度在走但一个字不出」必须能区分是分片为空、音频静音，还是模型返回 0 段。
         console.info('[VideoStudy] asr:chunk', {

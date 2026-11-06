@@ -4,7 +4,7 @@
  */
 import Dexie, { type Table } from 'dexie';
 import { appError, toAppError } from '../domain/errors';
-import type { Cue } from '../domain/transcript';
+import { hashTranscript, type Cue } from '../domain/transcript';
 import {
   DB_SCHEMA_VERSION,
   type ChunkResultRecord,
@@ -160,12 +160,15 @@ export async function replaceTranscriptCues(transcriptId: string, cues: Cue[]): 
     const revision = await getDb().transcripts.get(transcriptId);
     if (!revision) throw appError('NOT_FOUND', '字幕版本已不存在，无法追加条目');
     const rows: StoredCue[] = cues.map((cue) => ({ ...cue, id: `${transcriptId}:${cue.cueId}`, transcriptId }));
+    // sourceHash 必须随内容一起更新：否则最终保存按「全部分片」的哈希查不到这个版本，
+    // 会把整段字幕再写一份，长视频直接翻倍占用配额。
+    const updated: TranscriptRevision = { ...revision, cueCount: cues.length, sourceHash: hashTranscript(cues) };
     await getDb().transaction('rw', getDb().transcripts, getDb().cues, async () => {
       await getDb().cues.where('transcriptId').equals(transcriptId).delete();
       await getDb().cues.bulkPut(rows);
-      await getDb().transcripts.put({ ...revision, cueCount: cues.length });
+      await getDb().transcripts.put(updated);
     });
-    return { ...revision, cueCount: cues.length };
+    return updated;
   }, '更新字幕条目失败');
 }
 export async function listTranscripts(videoId: string): Promise<TranscriptRevision[]> {

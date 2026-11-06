@@ -27,12 +27,16 @@ export interface SilentCaptionInput {
   cid: string;
 }
 
-/** 已尝试过的 videoId：一次页面寿命内只自动取一次，避免重复网络请求。 */
+/** 已确认过字幕结果的 videoId：一次页面寿命内只自动取一次，避免重复网络请求。 */
 const attempted = new Set<string>();
+/** 页面脚本尚未注入时的重试次数。确认有/无字幕后不再重试。 */
+const pending = new Map<string, number>();
+const MAX_PROBE_RETRIES = 3;
 
 /** 测试与切页使用：清除「已尝试」记录，允许对同一视频重新静默取字幕。 */
 export function resetSilentCaptionAttempts(): void {
   attempted.clear();
+  pending.clear();
 }
 
 export interface SilentCaptionOutcome {
@@ -54,10 +58,11 @@ type TracksResult = { ok?: boolean; tracks?: unknown[]; reason?: string } | null
  */
 export async function silentFetchCaptions(input: SilentCaptionInput): Promise<SilentCaptionOutcome> {
   if (attempted.has(input.videoId)) return { used: false, reason: 'failed' };
-  attempted.add(input.videoId);
+  if ((pending.get(input.videoId) ?? 0) >= MAX_PROBE_RETRIES) return { used: false, reason: 'failed' };
 
   const existing = await listTranscripts(input.videoId).catch(() => []);
   if (existing.length > 0) {
+    attempted.add(input.videoId);
     // 已有字幕版本：会话沿用它即可，不重复取。
     vsLog.info('auto-caption:existing', { versions: existing.length });
     return { used: true, cues: existing[0]?.cueCount ?? 0 };
@@ -81,10 +86,17 @@ export async function silentFetchCaptions(input: SilentCaptionInput): Promise<Si
   };
 
   // 通道一：页内 <track> / 站点脚本里的字幕轨道（通用层，不依赖站点接口）。
+  // 页面脚本尚未注入时 sendMessage 失败并变成 null；这不是「没有字幕」，不能消耗唯一尝试。
   const listed = (await chrome.tabs
     .sendMessage(input.tabId, { type: 'LIST_PAGE_TRACKS' })
     .catch(() => null)) as TracksResult;
-  const pageTracks = listed?.ok && Array.isArray(listed.tracks) ? listed.tracks as {
+  if (listed == null) {
+    pending.set(input.videoId, (pending.get(input.videoId) ?? 0) + 1);
+    return { used: false, reason: 'failed' };
+  }
+  pending.delete(input.videoId);
+  attempted.add(input.videoId);
+  const pageTracks = listed.ok && Array.isArray(listed.tracks) ? listed.tracks as {
     url?: string; label?: string; language?: string; kind?: string;
   }[] : [];
   for (const track of rankCaptionTracks(pageTracks.map((item) => ({

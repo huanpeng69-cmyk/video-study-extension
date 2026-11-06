@@ -94,13 +94,18 @@ function normalizeSyntax(text: string): { text: string; trailingCommas: number; 
       previous = ':';
       continue;
     }
-    // 结构位的逗号（半角/全角）：字符串外等价于 ,，并同样识别尾逗号。
+    // 结构位的逗号（半角/全角）：字符串外等价于 ,，并识别尾逗号与连续逗号。
     if (char === ',' || char === '，') {
       if (char === '，') widePunctuation += 1;
       let next = index + 1;
-      while (next < text.length && /\s/.test(text[next]!)) next += 1;
-      // [,] / [1,,] / {"a":,} 是缺值，不得删除逗号将其伪装为有效结果。
+      while (next < text.length && /\\s/.test(text[next]!)) next += 1;
+      // 尾逗号：[,] / [1,] / {"a":,} → 删除
       if ((text[next] === '}' || text[next] === ']') && previous && !'[{,:'.includes(previous)) {
+        trailingCommas += 1;
+        continue;
+      }
+      // 连续逗号：,, 或 ,,，只保留一个（模型常在段落结尾多打一个）
+      if (previous === ',') {
         trailingCommas += 1;
         continue;
       }
@@ -149,7 +154,7 @@ function decode(text: string): Decoded | null {
 
 interface Candidate { text: string; complete: boolean; intendedJson: boolean }
 
-/** 扫描顶层独立候选。无论解析成功与否，都跳过整个根结构，绝不拆出其中的子块。 */
+/** 扫描顶层独立候选。全角引号与半角引号同样划定字符串，避免说明文字后的 JSON 在正文括号处被截断。 */
 function* candidates(body: string): Generator<Candidate> {
   let start = -1;
   let quoted = false;
@@ -171,10 +176,10 @@ function* candidates(body: string): Generator<Candidate> {
     if (quoted) {
       if (escaped) escaped = false;
       else if (char === '\\') escaped = true;
-      else if (char === '"') quoted = false;
+      else if (char === '"' || char === '”') quoted = false;
       continue;
     }
-    if (char === '"') { quoted = true; continue; }
+    if (char === '"' || char === '“' || char === '”') { quoted = true; continue; }
     if (char === '{' || char === '[') stack.push(char);
     if (char !== '}' && char !== ']') continue;
     const opener = stack.pop();

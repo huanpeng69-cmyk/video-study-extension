@@ -166,6 +166,7 @@ export async function transcribeWhishper(options: {
   audio: Blob;
   offsetMs: number;
   durationMs: number;
+  measured?: boolean;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -177,5 +178,5 @@ export async function transcribeWhishper(options: {
   }
   const id = await uploadChunk(options.config, options.audio, options);
   const job = await pollJob(options.config, id, options);
-  return normalizeLocalSegments(job.result ?? null, options.offsetMs, options.durationMs);
+  return normalizeLocalSegments(job.result ?? null, options.offsetMs, options.durationMs, { measured: options.measured });
 }

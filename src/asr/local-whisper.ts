@@ -132,15 +132,18 @@ export async function checkLocalWhisper(config: LocalWhisperConfig, fetchImpl?: 
  */
 const EDGE_SLACK_MS = 1_500;
 
-export function normalizeLocalSegments(payload: unknown, offsetMs: number, durationMs: number): TranscriptionSegment[] {
+export function normalizeLocalSegments(
+  payload: unknown, offsetMs: number, durationMs: number, options?: { measured?: boolean },
+): TranscriptionSegment[] {
   if (!Number.isFinite(offsetMs) || offsetMs < 0 || !Number.isFinite(durationMs) || durationMs <= 0) {
     throw appError('BAD_REQUEST', '录音片段时间无效');
   }
   const raw = payload as { segments?: unknown; text?: unknown } | null;
   if (!raw || !Array.isArray(raw.segments)) throw appError('LOCAL_WHISPER_ERROR', '本地 Whisper 缺少真实分段时间戳');
   if (raw.segments.length > 10_000) throw appError('LOCAL_WHISPER_ERROR', '本地 Whisper 返回分段过多');
-  // 允许音频比墙钟估算略长，但只到「本片终点」为止。
-  const limitMs = durationMs + EDGE_SLACK_MS;
+  // 已经解码出真实音频时长时不再追加容差，避免本片尾句写进下一片。
+  // 只有退回墙钟估算时才留 1.5 秒，吸收容器预填充。
+  const limitMs = durationMs + (options?.measured ? 0 : EDGE_SLACK_MS);
   const segments: TranscriptionSegment[] = [];
   for (const item of raw.segments) {
     const segment = item as { start?: unknown; end?: unknown; text?: unknown } | null;
@@ -162,7 +165,7 @@ export function normalizeLocalSegments(payload: unknown, offsetMs: number, durat
 }
 
 export async function transcribeLocalAudio(options: {
-  config: LocalWhisperConfig; audio: Blob; offsetMs: number; durationMs: number;
+  config: LocalWhisperConfig; audio: Blob; offsetMs: number; durationMs: number; measured?: boolean;
   signal?: AbortSignal; fetchImpl?: typeof fetch; timeoutMs?: number;
 }): Promise<TranscriptionSegment[]> {
   const config = normalizeLocalWhisper(options.config);
@@ -176,5 +179,5 @@ export async function transcribeLocalAudio(options: {
     method: 'POST', body: options.audio,
     headers: { 'Content-Type': options.audio.type || 'audio/webm', ...(config.language ? { 'X-VideoStudy-Language': config.language } : {}) },
   }, { signal: options.signal, timeoutMs: options.timeoutMs ?? 600_000, fetchImpl: options.fetchImpl });
-  return normalizeLocalSegments(payload, options.offsetMs, options.durationMs);
+  return normalizeLocalSegments(payload, options.offsetMs, options.durationMs, { measured: options.measured });
 }

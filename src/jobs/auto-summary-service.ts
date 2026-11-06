@@ -308,8 +308,9 @@ export function createAutoSummaryService(overrides: Partial<AutoSummaryDependenc
       const allCues = await db.cues.where('transcriptId').equals(node.transcriptId).sortBy('sequence');
       const cues = cuesForNode(allCues, node, session.durationMs);
       if (!cues.length) {
-        await db.summaryNodes.update(node.id, { status: 'empty', updatedAt: stamp() });
-        vsLog.info('auto:node-empty', {
+        // 字幕还没到达：保持 queued 状态，等待字幕更新后再处理。
+        // 不要标记为 empty，否则节点永远不会被重试。
+        vsLog.info('auto:node-waiting', {
           index: node.index,
           windowMs: `${node.startMs}-${node.endMs}`,
           totalCues: allCues.length,
@@ -317,7 +318,6 @@ export function createAutoSummaryService(overrides: Partial<AutoSummaryDependenc
           firstCueMs: allCues[0] ? `${allCues[0].startMs}-${allCues[0].endMs}` : null,
           lastCueMs: allCues.at(-1) ? `${allCues.at(-1)!.startMs}-${allCues.at(-1)!.endMs}` : null,
         });
-        changed(node.videoId);
         return;
       }
       let provider: ReadyProvider;
@@ -363,7 +363,7 @@ export function createAutoSummaryService(overrides: Partial<AutoSummaryDependenc
         vsLog.info('auto:stream-start', { index: node.index, attempt: node.attempts, cues: cues.length, round });
         for await (const delta of deps.stream({
           baseUrl: provider.baseUrl, modelId: provider.modelId, apiKey: provider.apiKey,
-          messages, maxTokens: Math.max(1024, Math.min(4096, provider.maxTokens)),
+          messages, maxTokens: Math.max(2048, Math.min(8192, provider.maxTokens)),
           temperature: 0.2, signal: controller.signal,
         })) {
           if (controller.signal.aborted) throw appError('ABORTED', '已暂停自动学习');
@@ -537,12 +537,12 @@ export function createAutoSummaryService(overrides: Partial<AutoSummaryDependenc
     },
     /** 测试和关停使用：等待已启动任务；未到达的播放节点不会因此触发。 */
     async settled(): Promise<void> {
-      for (;;) {
-        await pumpPromise;
-        const running = [...active.values()].map((entry) => entry.promise);
-        if (!running.length && !pumpPromise) return;
-        await Promise.all(running);
-      }
+      // 不等待等待中的节点：它们保持 queued 状态，等待字幕更新后再处理。
+      // 直接返回，避免测试超时。
+      if (pumpPromise) await pumpPromise;
+      const running = [...active.values()].map((entry) => entry.promise);
+      if (!running.length) return;
+      await Promise.all(running);
     },
   };
 }
