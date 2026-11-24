@@ -7,7 +7,7 @@ export default defineConfig({
   manifest: {
     name: '视频学习笔记',
     description: '在任意网站的视频页学习：识别播放器、读取页内字幕、音频转写、随播放自动生成带引用笔记，本地保存并导出 Markdown。',
-    version: '0.17.6',
+    version: '0.18.0',
     // sidePanel：让界面常驻浏览器侧边栏，切换标签页时不中断、点页面外部不消失。
     // tabCapture/offscreen：只为「从音频转写」采集当前标签页声音到本机。
     // 不新增 <all_urls> 之外的宿主权限，也不申请 webRequest 之类可读请求内容的权限。

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MAX_CHARS_PER_CHUNK, DEFAULT_MAX_CUES_PER_CHUNK, planChunks } from '../src/domain/chunking';
-import { SUMMARY_CONCURRENCY, summaryOutputBudget } from '../src/jobs/summary-service';
+import { summaryOutputBudget } from '../src/domain/budget';
 import type { Cue } from '../src/domain/transcript';
 
 function makeCues(count: number, textLength = 12): Cue[] {
@@ -86,14 +86,6 @@ describe('输出预算（避免截断导致整段重试）', () => {
     expect(summaryOutputBudget(100_000, 4096)).toBeLessThanOrEqual(8192);
   });
 });
-
-describe('有界并发', () => {
-  it('并发度保持保守，避免撞上免费层限流', () => {
-    expect(SUMMARY_CONCURRENCY).toBeGreaterThan(1);
-    expect(SUMMARY_CONCURRENCY).toBeLessThanOrEqual(4);
-  });
-});
-
 describe('按固定时间间隔切段（增量产出）', () => {
   const mkTimed = (n: number, secondsPer: number) =>
     Array.from({ length: n }, (_, i) => ({

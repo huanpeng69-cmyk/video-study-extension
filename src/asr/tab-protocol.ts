@@ -19,7 +19,15 @@ export const ASR_CAPTURE_CHUNK_MS = 30_000;
  * 首个分片 8 秒就切一次，之后回到 30 秒，兼顾响应速度与请求开销。
  */
 export const ASR_FIRST_CHUNK_MS = 8_000;
-export const ASR_MAX_QUEUED = 4;
+/**
+ * 队列上限：超出即停止采集，作为「转写彻底卡死」的最后防线。
+ *
+ * 历史教训：上限是 4 且分片固定 30 秒时，本机 tiny 模型处理一片常需 30 秒以上，
+ * 队列只增不减，2 分钟就撞上限、表现为「播到三四分钟转写就停」。
+ * 现在 tab-recorder 会在积压时自动拉长分片给转写让路，
+ * 这里把上限放宽到 8，让限流优先由分片时长完成，而不是靠停止录音。
+ */
+export const ASR_MAX_QUEUED = 8;
 export const ASR_MAX_RECORD_MS = 2 * 60 * 60_000;
 export const ASR_SILENCE_PEAK = 0.0001;
 /** 连续多少个位置采样都读到静音，才认定是真实静音操作；单次读取抖动不足以结束整场录音。 */

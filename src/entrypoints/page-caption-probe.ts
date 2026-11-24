@@ -81,7 +81,10 @@ export function load(): void {
       const url = withPreferredFormat(data.url);
       void (async () => {
         try {
-          const response = await fetch(url, { credentials: 'same-origin' });
+          // timedtext 常在子域（www.youtube.com 页面取 youtube.com），
+          // 只带 same-origin 会丢掉登录态，隐私或会员专属字幕直接返回空。
+          // 代码不读取 Cookie 内容，只让浏览器按默认策略随请求发送。
+          const response = await fetch(url, { credentials: 'include' });
           if (!response.ok) {
             window.postMessage({ source: CHANNEL, type: 'read', requestId: data.requestId, ok: false, reason: `字幕请求失败（HTTP ${response.status}）` }, window.location.origin);
             return;

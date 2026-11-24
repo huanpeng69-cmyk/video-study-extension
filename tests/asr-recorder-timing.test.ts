@@ -140,3 +140,26 @@ describe('录音器时序：播放正常时是否真的产出分片', () => {
     expect(done).toHaveLength(0);
   });
 });
+
+describe('转写慢于录音时不能中断采集', () => {
+  it('积压时自动拉长分片，且播到 8 分钟也不出现 queue-full 停止', async () => {
+    // 复现用户报告：「播着三四分钟转写字幕就停止了」。
+    // 让每片转写耗时远超录音产片间隔，逼出队列积压。
+    transcribe.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 90_000));
+      return [{ startMs: 0, endMs: 1_000, text: '慢转写' }];
+    });
+
+    const { events } = await run(480);
+    const done = events.filter((event) => event.kind === 'done');
+    expect(done).toHaveLength(0);
+    // 不能以「队列已满」为由停止：那是把慢转写变成采集中断。
+    const stopped = JSON.stringify(events);
+    expect(stopped).not.toContain('queue-full');
+
+    // 积压后分片窗口必须变长，否则产片速度恒定、队列永远追不上。
+    const durations = transcribe.mock.calls.map((call) => (call[0] as { durationMs: number }).durationMs);
+    expect(durations.length).toBeGreaterThan(1);
+    expect(Math.max(...durations)).toBeGreaterThan(ASR_CAPTURE_CHUNK_MS);
+  });
+});

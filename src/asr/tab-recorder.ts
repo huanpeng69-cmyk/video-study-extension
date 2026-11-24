@@ -400,9 +400,25 @@ export class TabAudioRecorder {
       else if (!this.suspended) this.beginPart(mime);
     }, { once: true });
     recorder.start(); // 每段重新 start/stop，不能把无容器头的 timeslice 直接当独立文件上传。
-    // 首片更短：让用户几秒内就看到第一批文字，而不是先等满 30 秒。
-    const window = this.nextIndex === 0 ? ASR_FIRST_CHUNK_MS : ASR_CAPTURE_CHUNK_MS;
-    this.timer = setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, window);
+    this.timer = setTimeout(() => { if (recorder.state !== 'inactive') recorder.stop(); }, this.chunkWindowMs());
+  }
+
+  /**
+   * 本片录制时长。
+   *
+   * 首片更短：让用户几秒内就看到第一批文字，而不是先等满 30 秒。
+   *
+   * 积压自适应：转写是串行队列，本机 tiny 模型处理 30 秒音频常需 30 秒以上。
+   * 固定 30 秒分片时队列只增不减，攒到 ASR_MAX_QUEUED 就撞上「队列已满」，
+   * 表现为「播到三四分钟转写就停了」。这里在积压时把分片拉长（最多翻倍），
+   * 等价于降低录音产片速率给转写让路，既不丢音频也不中断采集。
+   */
+  private chunkWindowMs(): number {
+    if (this.nextIndex === 0) return ASR_FIRST_CHUNK_MS;
+    const backlog = this.pending - 1;
+    if (backlog <= 0) return ASR_CAPTURE_CHUNK_MS;
+    const factor = Math.min(backlog + 1, 3);
+    return ASR_CAPTURE_CHUNK_MS * factor;
   }
 
   private enqueue(audio: Blob, offsetMs: number, durationMs: number, silent: boolean): void {

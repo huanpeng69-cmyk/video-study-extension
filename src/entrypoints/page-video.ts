@@ -89,6 +89,24 @@ function requestProbeText(url: string, timeoutMs = 15_000): Promise<{ ok: boolea
 /** 字幕文件大小上限：超过则明确失败，不做截断猜测。 */
 const MAX_TRACK_BYTES = 2 * 1024 * 1024;
 
+/**
+ * 取回字幕文本：先按「带 Cookie」请求，失败再降级为同源请求。
+ *
+ * 为什么要两级：
+ * - 带 Cookie 才能拿到登录态下的字幕（YouTube 隐私/会员字幕、B 站需登录的字幕轨）。
+ * - 少数站点对跨域读取既不给 CORS 头又拒绝带凭据的请求，此时降级重试仍可能成功，
+ *   比直接失败多一次机会，也不会让原本同源可读的站点变差。
+ * 两次都失败时把最后的状态码如实抛给调用方，不伪造空字幕。
+ */
+async function fetchTrackText(url: string): Promise<Response> {
+  const withCookies = await fetch(url, { credentials: 'include' }).catch(() => null);
+  if (withCookies?.ok) return withCookies;
+  const sameOrigin = await fetch(url, { credentials: 'same-origin' }).catch(() => null);
+  if (sameOrigin) return sameOrigin;
+  if (withCookies) return withCookies;
+  throw new Error('网络不可达');
+}
+
 interface PageRuntime {
   epoch: string;
   lastVideoKey: string;
@@ -250,9 +268,11 @@ export function load(): void {
     }
     if (!url) return { ok: false, reason: '该轨道没有可读取的地址' };
     try {
-      // 以页面身份取回；跨域且无 CORS 头时会失败，此处明确报错而不是伪造。
-      const response = await fetch(url, { credentials: 'same-origin' });
-      if (!response.ok) return { ok: false, reason: `字幕文件请求失败（HTTP ${response.status}）` };
+      // 以页面身份取回，并允许跨域附带站点 Cookie：
+      // YouTube 的 timedtext 常在子域（www.youtube.com/watch 页面取 youtube.com/videoplayback），
+      // 只带 same-origin 会丢掉登录态，隐私 / 会员专属字幕直接返回空。
+      // 代码不读取 Cookie 内容，只是让浏览器按默认策略随请求发送。
+      const response = await fetchTrackText(url);
       const buffer = await response.arrayBuffer();
       if (buffer.byteLength > MAX_TRACK_BYTES) return { ok: false, reason: '字幕文件超过 2 MB，已停止读取' };
       // 站点可能返回 VTT/SRT，也可能返回 XML timedtext；统一归一后再交给下游校验。

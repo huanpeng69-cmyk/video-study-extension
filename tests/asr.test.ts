@@ -19,8 +19,8 @@ import {
 } from '../src/asr/bridge-protocol';
 import { buildTranscriptionUrl, mapAsrError, normalizeTranscription } from '../src/asr/client';
 import { cuesFromAsrSegments } from '../src/domain/transcript';
-import { base64ToBlob, fileNameForMime, isFatal } from '../src/asr/orchestrator';
-import { extensionForMime, pickRecorderMime } from '../src/asr/extract';
+import { base64ToBlob, isFatalAsrError } from '../src/asr/chunk';
+import { extensionForMime, fileNameForMime, pickRecorderMime } from '../src/asr/extract';
 
 describe('normalizeTranscription', () => {
   it('把段内秒级时间加上分段偏移转成绝对毫秒', () => {
@@ -81,9 +81,9 @@ describe('mapAsrError', () => {
   });
 
   it('鉴权与额度类错误被视为致命（不继续重试）', () => {
-    expect(isFatal(mapAsrError(401, ''))).toBe(true);
-    expect(isFatal(mapAsrError(402, ''))).toBe(true);
-    expect(isFatal(mapAsrError(500, ''))).toBe(false);
+    expect(isFatalAsrError(mapAsrError(401, ''))).toBe(true);
+    expect(isFatalAsrError(mapAsrError(402, ''))).toBe(true);
+    expect(isFatalAsrError(mapAsrError(500, ''))).toBe(false);
   });
 });
 

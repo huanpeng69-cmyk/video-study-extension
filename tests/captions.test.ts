@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseYouTubeCaptionTracks } from '../src/domain/captions';
 import { deriveWebVideoIdentity } from '../src/domain/video';
@@ -24,6 +25,18 @@ describe('YouTube 字幕轨道解析', () => {
     expect(tracks[1]?.label).toBe('English (auto)');
     expect(tracks[1]?.kind).toBe('asr');
     expect(tracks.every((track) => track.hasParsedCues === false)).toBe(true);
+  });
+
+  it('字幕请求必须带凭据：跨域 timedtext 丢了登录态会返回空', () => {
+    // 回归护栏：历史上 page-caption-probe 与 page-video 都用 same-origin 取字幕，
+    // 在 www.youtube.com 页面请求 youtube.com 的 timedtext 时既不带 Cookie 又跨域，
+    // 隐私或会员字幕直接拿不到。这里对源码断言，锁住这个行为。
+    const probeSource = readFileSync(new URL('../src/entrypoints/page-caption-probe.ts', import.meta.url), 'utf8');
+    const pageSource = readFileSync(new URL('../src/entrypoints/page-video.ts', import.meta.url), 'utf8');
+    expect(probeSource).toContain("credentials: 'include'");
+    // page-video 走两级：先 include，失败再降级 same-origin。
+    expect(pageSource).toContain("credentials: 'include'");
+    expect(pageSource).toContain("credentials: 'same-origin'");
   });
 
   it('兼容外包 args.player_response 字符串的结构', () => {
